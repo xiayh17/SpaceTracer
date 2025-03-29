@@ -21,9 +21,9 @@ def main():
     else:
         barcode_dict={}
 
-    tmp_count_dir=os.path.join(args.outdir,"count_files");check_dir(tmp_count_dir)
+    tmp_count_dir=os.path.join(args.outdir);check_dir(tmp_count_dir)
 
-    spot_count_file=os.path.join(tmp_count_dir, args.outprefix+".spot_count.out")
+    spot_count_file=os.path.join(tmp_count_dir, args.outprefix+".spot.count.out")
     cell_count_file = os.path.join(tmp_count_dir, args.outprefix +".cell.count.out") ## only for stereo-seq
     cluster_count_file = os.path.join(tmp_count_dir, args.outprefix+ ".cluster.count.out")
     cluster_count_filter_file = os.path.join(tmp_count_dir, args.outprefix + ".cluster_filter.count.out")

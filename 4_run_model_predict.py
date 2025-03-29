@@ -3,7 +3,7 @@ from module.mutation_prediction import mutation_classification
 from utils import check_dir, str2bool
 
 
-def predict_mutation(args):
+def main():
     """
     Predict somatic mutations with classification methods
     """
@@ -56,3 +56,7 @@ if __name__ == '__main__':
     parser.add_argument("--min_samples_split", required=False, default=2, type=int, help="the minimum number of samples required to split an internal node (default=2)")    
 
     args = parser.parse_args()
+
+
+if __name__ == '__main__':
+    main()  

@@ -1,0 +1,19 @@
+sample: "demo"
+threads: 1
+readLen: 120
+spacerangerResult: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result"  #absolute path
+srcPath: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/"
+GENOME_FA: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa"
+gff3_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gencode.v44.annotation.exon.sort.gff3"
+mappbablity_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/k24.umap.bedgraph"
+prior_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/demo.prior.out" # use your personal prior file
+gnomad_list: "/storage/douyanmeiLab/yangzhirui/01.Data_download/07.brain/04.Analysis/04.mutations/annovar_info.txt" # if prior_file is provided, gnomad_list is not required
+savePATH: "demo_output/"
+SPECIES: "human"
+gender: "male"  
+gtexGene: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gtexGene.txt"
+lysis_error_SigProfile: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/skin_CSCC.lysis_errors_sites.SigProfile.txt"
+PCR_errors_SigProfile: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/skin_CSCC.PCR_errors_sites.SigProfile.txt"
+bkg: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/skin_CSCC.bkg.txt"
+cluster: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/demo_cluster.txt" ## you can provide personal cluster result. If not, we would run cluster automaticly
+h5ad_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/demo_results.h5ad" ## you can provide personal cluster result. If not, we would run cluster automaticly

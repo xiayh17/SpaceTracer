@@ -3,6 +3,7 @@ import datetime
 from functools import partial
 import multiprocessing
 import os
+import shutil
 from module.read_file import get_freq_for_mutation_simple_from_annovar, handel_and_split_pos_for_bed, handle_prior_bed
 from others.domain_segmentation import cluster2domain, cluster_spot_GraphST, cluster_spot_SpaGCN
 from utils import check_dir, check_input, check_output, get_chrom_list_from_file, intersect_pos_gnomad, str2bool
@@ -36,7 +37,7 @@ def get_prior(args):
 
     out_prior.close()
     check_output(os.path.join(args.outdir, in_name + ".prior.out"))
-    os.removedirs(vcf2bed_split_dir);os.removedirs(short_gnomad_dir)
+    shutil.rmtree(vcf2bed_split_dir);shutil.rmtree(short_gnomad_dir)  
     
 
 def cluster_spot(args):

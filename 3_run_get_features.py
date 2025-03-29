@@ -28,7 +28,7 @@ def main():
     spotgenotype_file=args.spot_genotype
     germline_file=args.germline
     ref_fasta=args.fasta
-    bam=args.bam
+    filter_bam=args.filter_bam
     bkg=args.bkg
     thread=int(args.thread)
     artifact_signature1=args.artifact_signature1
@@ -145,7 +145,7 @@ def main():
         else:
             gender="female"
 
-        partial_func=partial(phase_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, bam,args.flanking,args.minprior,gender,gene_name_index,args.CBtag,args.UBtag)
+        partial_func=partial(phase_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, filter_bam,args.flanking,args.minprior,gender,gene_name_index,args.CBtag,args.UBtag)
         short_gene_review=open(short_gencode_file_name,"r")
         lines=short_gene_review.readlines()
 
@@ -180,7 +180,7 @@ def main():
         else:
             gender="female"
 
-        partial_func=partial(phase_no_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, args.bam,args.flanking,args.minprior,gender,gene_name_index)
+        partial_func=partial(phase_no_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, filter_bam,args.flanking,args.minprior,gender,gene_name_index)
         short_gene_review=open(short_gencode_file_name,"r")
         lines=short_gene_review.readlines()
 
@@ -209,9 +209,9 @@ def main():
 
         CBtag=args.CBtag
         UBtag=args.UBtag
-        bam_file=args.bam
+        bam_file=args.raw_bam
         ind_count_file=args.ind_count_file
-        ind_geno_file=args.ind_geno_file
+        ind_geno_file=args.ind_genotype
         h5ad_path=args.h5ad
         empty_df,adata=handle_h5ad_file(h5ad_path)
 
@@ -286,24 +286,23 @@ def main():
         shutil.rmtree(tmpdir)  
 
     
-
     def add_hFDR():
-        if check_input(artifact_signature1):
+        if os.path.exists(artifact_signature1):
             current_directory = os.path.dirname(os.path.abspath(__file__))
-            script_path=os.path.join(os.path.dirname(current_directory),"others/statistic_by_mutation_signature.R")
+            script_path=os.path.join(current_directory,"others/statistic_by_mutation_signature.R")
             
             command=f"Rscript {script_path} {feature_file} {args.outdir} {bkg} {artifact_signature1} {artifact_signature2}"
             result=subprocess.run(command,shell=True,check=True)
 
 
     ############# Run #############
-    
     if args.rerun:
         get_spatial_test_result()
         phase_combine()
         phase_no_combine()
         extract_feature()
         add_hFDR()
+
     elif not check_output(spatial_feature_file):
         get_spatial_test_result()
         phase_combine()
@@ -345,7 +344,8 @@ parser.add_argument("--outprefix", help="Custom prefix for the output files.", r
 parser.add_argument("--thread",required=False,default=2, type=int,help="thread")
 parser.add_argument("--species",required=False,default="human", type=str,help="human species would filter hSNP, while other not")
 parser.add_argument("--fasta", required=True,help="fasta file")
-parser.add_argument("--bam", required=False, help="bam file")
+parser.add_argument("--filter_bam", required=False, help="bam file")
+parser.add_argument("--raw_bam", required=False, help="bam file")
 parser.add_argument("--germline",required=True, help="germline file")
 parser.add_argument("--ind_genotype",required=True,help="individual genotype file")
 parser.add_argument("--spot_genotype",required=True,help="spot genotype file")
@@ -360,7 +360,6 @@ parser.add_argument("--prior",required=False,default="", help="prior file")
 parser.add_argument("--h5ad",required=False,default="", help="The h5ad file")
 parser.add_argument("--spaceranger_result_dir",required=False,default="", help="The directory storing spaceranger result, such as demo/outs")
 parser.add_argument("--ind_count_file",required=False,default="", help="ind_count_file")
-parser.add_argument("--ind_geno_file",required=False,default="", help="ind_geno_file")
 parser.add_argument("--mappbablity_file",required=False,default="", help="mappbablity_file")
 parser.add_argument("--gff3_file",required=False,default="", help="gff3_file")
 parser.add_argument("--vaf_cluster_file",required=False,default="", help="vaf_cluster_file")

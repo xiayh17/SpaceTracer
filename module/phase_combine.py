@@ -93,8 +93,8 @@ def short_gencode_file(gencode_file,site_bed_file,tmp_dir,rerun=True):
 
     result=subprocess.run(run_shell,shell=True)
     if result.returncode!=0:
-        print(f'Something wrong when generate the shorted gene review file for {short_gencode_file_name}.')
-        sys.exit()
+        raise TypeError(f'Something wrong when generate the shorted gene review file for {short_gencode_file_name}.')
+        
     return short_gencode_file_name
 
 
@@ -572,7 +572,7 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
     chr12	52487212	52487212    het C   T   0.1,0.5
     chr12   52487212	52487212    mosaic C   T   0.1,0.5
     '''
-    print("====",line)
+    # print("====",line)
 
     out_list=[]
     sline=line.strip().split("\t")
