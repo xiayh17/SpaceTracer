@@ -92,19 +92,3 @@ def UMI_count_cell(umi_count_file, output_file, type="cell", cluster_file=None, 
     grouped.rename(columns={'chr': '#chrom'}, inplace=True)
     grouped.to_csv(output_file, sep="\t", index=None, na_rep='NA')
     
-
-
-# def combine_q_columns(series, epsQ=20):
-#     """Combine quality columns"""
-#     combined = {}
-#     for q in series:
-#         if isinstance(q, str) and q != "":  # Check if q_column is a string
-#             q_dict = str2dict(q)
-#             q_filter = {k:v for k,v in q_dict.items() if k>=epsQ}
-#             combined = dict(Counter(combined) + Counter(q_filter))
-#     # convert to string
-#     if not bool(combined):
-#         result = "NA"
-#     else:
-#         result = ','.join(f'{int(key)}:{value}' for key, value in combined.items())
-#     return result

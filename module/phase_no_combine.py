@@ -90,7 +90,7 @@ def short_gencode_file(gencode_file,site_bed_file,tmp_dir,rerun=True):
     result=subprocess.run(run_shell,shell=True)
     if result.returncode!=0:
         print(f'Something wrong when generate the shorted gene review file for {short_gencode_file_name}.')
-    print("done")
+
     return short_gencode_file_name
 
 
@@ -305,7 +305,7 @@ def filter_geno_dict(count_result, scale_ratio=5):
     binom_test_p_h2=scipy.stats.binomtest(ceil(100*h2/dp), 100,p=0.5,alternative="two-sided").pvalue
     # binom_test_result_h3_h2=scipy.stats.binom_test(100*(h1+)/(dp), 100*h2/(h1+h2),p=0.5,alternative="two-sided") 
     # if scale_ratio*(h2+h3+h4) > h1 and h1 > 1/scale_ratio*(h2+h3+h4) and h2 > scale_ratio*(h3+h4): # and sorted([h1_g,h2_g])==sorted([ref,alt])):
-    if binom_test_p_h1 >0.05 and  binom_test_p_h2 >0.05:
+    if binom_test_p_h1 >0.05 or  binom_test_p_h2 >0.05:
         ## we hope the count of h1, h2 is similar to 0.5
         short_count_result={k:v for k,v in count_result.items() if k[-1] in [h1_g, h2_g]}
         geno_rank_list=sorted(short_count_result.items(), key = lambda item:item[1], reverse=True)
@@ -544,7 +544,7 @@ def phase_no_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_ba
     chr12	52487212	52487212    het C   T   0.1,0.5
     chr12   52487212	52487212    mosaic C   T   0.1,0.5
     '''
-    print(line)
+    # print("#input line",line)
 
     out_list=[]
     sline=line.strip().split("\t")
@@ -659,12 +659,7 @@ def phase_no_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_ba
             #per_read_genotypes_quality[barcode].append(phred)
     
     del per_read_dict,barcode
-    # print(candidate_allele_info)
-    # print(per_read_genotypes_count.values())
-    # print(candidate_allele_info[1:])
-    # print("###",candidate_allele_info[0])
-    # print(pos_candidate_dict)
-    # print("yes2")
+
     candidate_allele_info_only_pos=[s[0] for s in candidate_allele_info]
     for mosaic_pos in pos_candidate_dict["mosaic_pos"]:
         chrom, pos, germline, mutant = handle_posname(mosaic_pos)
@@ -688,13 +683,6 @@ def phase_no_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_ba
                 short_list.append(bases)
                 if "." not in bases and bases[0]==mutant:
                     short_dict[barcode]=bases
-                    #print("-",barcode,bases,per_read_genotypes_count[barcode])
-
-            # for values in per_read_genotypes_count.values():
-            #     # print(index_mut,pos,ref,alt,values[index_mut])
-            #     bases=",".join([values[index_mosaic],values[index_germ]])
-            #     short_list.append(bases)
-            #     # print(bases)
 
             count_result=dict(Counter([bases for bases in short_list if "." not in bases]))
             h1,h2,geno_count_dict=filter_geno_dict(count_result)
@@ -705,10 +693,12 @@ def phase_no_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_ba
             
             # print(count_result)
             # print("filter2",mosaic_pos,info_SNP,h1,h2)   
+            # print(geno_count_dict)
             if geno_count_dict!={}:
                 new_mut_name="_".join([str(chrom_germ), str(pos_germ),h1,h2])
                 total_count=allele_total_count[str(pos)]
                 dp,mut_allele,haplo,annotated_type,detail_count_list=calculate_phased_haplo(geno_count_dict, germline, mutant, h1, h2)
+                # print(dp,mut_allele,haplo,annotated_type,detail_count_list)
                 if mut_allele==0 or mut_allele == "0":
                     continue
                 
