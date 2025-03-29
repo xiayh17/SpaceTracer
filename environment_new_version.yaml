@@ -21,8 +21,7 @@ dependencies:
   - r-pracma
   - r-dplyr
   - snakemake=3.13.3
-  - openjdk=18.0.1.1
-    
+
   - pip:
     - colorcet==3.0.1
     - GraphST
