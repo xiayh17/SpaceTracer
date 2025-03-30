@@ -9,26 +9,48 @@ import time
 import uuid
 from shutil import copyfile
 
+shell.executable("/bin/bash")  # Ensure the script uses bash
+
+shell.prefix("source /opt/conda/etc/profile.d/conda.sh")
+
 configfile: "config.txt" 
 SAMPLE=config["sample"]
 THREADS=config["threads"]
 readLen=config["readLen"]
 spacerangerResult=config["spacerangerResult"]
+spacerangerResult=os.path.abspath(spacerangerResult)
 srcPath=config["srcPath"]
+srcPath=os.path.abspath(srcPath)
 GENOME_FA=config["GENOME_FA"]
+GENOME_FA=os.path.abspath(GENOME_FA)
+GENOME_FAI=GENOME_FA+".fai"
+GENOME_FAI=os.path.abspath(GENOME_FAI)
 gff3_file=config["gff3_file"]
+gff3_file=os.path.abspath(gff3_file)
 mappbablity_file=config["mappbablity_file"]
+mappbablity_file=os.path.abspath(mappbablity_file)
 savePATH=config["savePATH"]
+savePATH=os.path.abspath(savePATH)
 SPECIES=config["SPECIES"]
 gender=config["gender"]
 gtexGene=config["gtexGene"]
+gtexGene=os.path.abspath(gtexGene)
 lysis_error_SigProfile=config["lysis_error_SigProfile"]
+lysis_error_SigProfile=os.path.abspath(lysis_error_SigProfile)
 PCR_errors_SigProfile=config["PCR_errors_SigProfile"]
+PCR_errors_SigProfile=os.path.abspath(PCR_errors_SigProfile)
 bkg=config["bkg"]
+bkg=os.path.abspath(bkg)
 cluster_file=config["cluster"]
+cluster_file=os.path.abspath(cluster_file)
 h5ad_file=config["h5ad_file"]
+h5ad_file=os.path.abspath(h5ad_file)
 gnomad_list=config["gnomad_list"]
+gnomad_list=os.path.abspath(gnomad_list)
 prior=config["prior_file"]
+prior=os.path.abspath(prior)
+model_dir=config["model_dir"]
+model_dir=os.path.abspath(model_dir)
 
 SAMPLES=[ str(SAMPLE) ]
 
@@ -48,17 +70,18 @@ if h5ad_file!="" and os.path.exists(h5ad_file):
 workdir: savePATH
 rule all:
     input:
-        expand("{sample}/predict/results/{sample}_total_pred_truesites.txt", sample=SAMPLES)
+        expand(os.path.abspath("{sample}/predict/results/{sample}_pred_truesites.txt"), sample=SAMPLES)
 
 ####### sub functions #######
 rule cluster:
     input:
         indir=spacerangerResult+"/outs/" 
     output:
-        cluster_out="{sample}/cluster_info/result/{sample}_cluster.txt",
-        h5ad_file="{sample}/cluster_info/result/{sample}_results.h5ad"
+        cluster_out=os.path.abspath("{sample}/cluster_info/result/{sample}_cluster.txt"),
+        h5ad_file=os.path.abspath("{sample}/cluster_info/result/{sample}_results.h5ad")
     shell:
         """
+        source activate SpaceTracer
         python {srcPath}/0_other_func.py cluster \
                 --indir {input.indir} \
                 --method GraphST \
@@ -71,33 +94,38 @@ rule split_bam:
     input:
         pos_file=spacerangerResult+"/outs/spatial/tissue_positions.csv",
         bam_file=spacerangerResult+"/outs/possorted_genome_bam.bam"
-
     output:
-        barcode_file="{sample}/bam_filter/{sample}_barcode.txt",
-        IN_bam="{sample}/bam_filter/IN.bam"
-
+        barcode_file=os.path.abspath("{sample}/bam_filter/{sample}_barcode.txt"),
+        IN_bam=os.path.abspath("{sample}/bam_filter/IN.bam")
     shell:
         """
+        source activate SpaceTracer
+        echo "Debug: Input file exists check:"
+        ls -la {input.pos_file} || echo "Input position file missing!"
+        
+        echo "Debug: Creating barcode file with sed and awk..."
         sed 's/,/\\t/g' {input.pos_file} | sed '1d' | awk '{{if ($2==0) print $1, "OUT"; else print $1, "IN"}}' OFS="\\t" > {output.barcode_file}
+        
+        echo "Debug: Running sinto filterbarcodes..."
         sinto filterbarcodes -b {input.bam_file} -c {output.barcode_file} --barcodetag "CB" --outdir {wildcards.sample}/bam_filter -p 4
         """
 
 
 rule mpileup:
     input:
-        bam_file="{sample}/bam_filter/IN.bam",
+        bam_file=os.path.abspath("{sample}/bam_filter/IN.bam"),
         genome_fa=GENOME_FA,
         genome_fai=GENOME_FA+".fai"
-        
     output:
-        bam_filter="{sample}/bam_filter/IN_filter.bam",
-        vcf_file="{sample}/{sample}_mpileup.filter.result"
-
+        bam_filter=os.path.abspath("{sample}/bam_filter/IN_filter.bam"),
+        vcf_file=os.path.abspath("{sample}/{sample}_mpileup.filter.result")
     threads: THREADS
     # log: 
     #     log="04.mutations/{sim_type}/log/mpileup_{sim_type}.log" 
+    conda: "SpaceTracer"
     shell:
         """
+        source activate SpaceTracer
         samtools index {input.bam_file}
         samtools view -e "[nM] <= 5" -q 255 -o {output.bam_filter} {input.bam_file}
         samtools index {output.bam_filter}
@@ -107,33 +135,37 @@ rule mpileup:
         awk '$3!="N"' |cut -f 1-3,8-15 | \
         awk '$6+$7+$9+$10 >= 5 && $4+$5+$6+$7+$9+$10>=30' | \
         awk '($6+$7+$9+$10)/($4+$5+$6+$7+$9+$10)>=0.001' - > {output.vcf_file}
-
         """
 
 rule combine_umi_counts:
     input:
-        bam_filter="{sample}/bam_filter/IN_filter.bam",
+        bam_filter=os.path.abspath("{sample}/bam_filter/IN_filter.bam"),
         tissue_positions=spacerangerResult+"/outs/spatial/tissue_positions.csv",
-        vcf_snp_file="{sample}/{sample}_mpileup.filter.result",
-        cluster_out="{sample}/cluster_info/result/{sample}_cluster.txt"
-
+        vcf_snp_file=os.path.abspath("{sample}/{sample}_mpileup.filter.result"),
+        cluster_out=os.path.abspath("{sample}/cluster_info/result/{sample}_cluster.txt")
     output:
-        spot_count_file="{sample}/counts_files/{sample}.spot.count.out",
-        cluster_count_file="{sample}/counts_files/{sample}.cluster.count.out",
-        cluster_count_filter_file="{sample}/counts_files/{sample}.cluster_filter.count.out",
-        ind_count_filter_file="{sample}/counts_files/{sample}.ind_filter.count.out"
-
+        spot_count_file=os.path.abspath("{sample}/counts_files/{sample}.spot.count.out"),
+        cluster_count_file=os.path.abspath("{sample}/counts_files/{sample}.cluster.count.out"),
+        cluster_count_filter_file=os.path.abspath("{sample}/counts_files/{sample}.cluster_filter.count.out"),
+        ind_count_filter_file=os.path.abspath("{sample}/counts_files/{sample}.ind_filter.count.out"),
+        done_flag=os.path.abspath("{sample}/counts_files/{sample}.counts.done")
     threads: int(THREADS)
+    conda: "SpaceTracer"
     shell:
         """
+        source /opt/conda/etc/profile.d/conda.sh
+        conda activate SpaceTracer
         python {srcPath}/1_run_data_process.py  \
             --posfile {input.vcf_snp_file} \
             --outprefix {wildcards.sample} \
             --bam {input.bam_filter} \
             --barcodes  {input.tissue_positions} \
-            --outdir {wildcards.sample}/counts_files \
+            --outdir {wildcards.sample}/counts_files/ \
             --thread {threads} \
             --cellcluster {input.cluster_out}
+        
+        # create done flag
+        touch {output.done_flag}
         """
 
 rule prior:
@@ -141,10 +173,12 @@ rule prior:
         vcf_snp_file="{sample}/{sample}_mpileup.filter.result",
         annovar_info=gnomad_list
     output:
-        prior_file="{sample}/{sample}.prior.out"
+        prior_file=os.path.abspath("{sample}/{sample}.prior.out")
     threads: int(THREADS)
+    conda: "SpaceTracer"
     shell:
         """
+        source activate SpaceTracer
         python {srcPath}/0_other_func.py prior \
             --outprefix {wildcards.sample} \
             --posfile {input.vcf_snp_file}  --annovar {input.annovar_info} \
@@ -155,12 +189,14 @@ rule prior:
 
 rule cellnum:
     input:
-        bam_file="{sample}/bam_filter/IN_filter.bam",
-        cluster_info="{sample}/cluster_info/result/{sample}_cluster.txt"
+        bam_file=os.path.abspath("{sample}/bam_filter/IN_filter.bam"),
+        cluster_info=os.path.abspath("{sample}/cluster_info/result/{sample}_cluster.txt")
     output:
-        cell_num_file="{sample}/refined_umi_read_cellNum.txt"
+        cell_num_file=os.path.abspath("{sample}/refined_umi_read_cellNum.txt")
+    conda: "SpaceTracer"
     shell:
         """
+        source activate SpaceTracer
         python {srcPath}/others/get_umiCount_cellNum.py \
             --bam {input.bam_file} \
             --run \
@@ -170,20 +206,22 @@ rule cellnum:
 
 rule genotyper:
     input:
-        spot_count_file="{sample}/counts_files/{sample}.spot.count.out",
-        cluster_count_filter_file="{sample}/counts_files/{sample}.cluster_filter.count.out",
-        ind_count_filter_file="{sample}/counts_files/{sample}.ind_filter.count.out",
-        cluster_info="{sample}/cluster_info/result/{sample}_cluster.txt",
-        prior_file="{sample}/{sample}.prior.out",
-        cell_num_file="{sample}/refined_umi_read_cellNum.txt"
+        spot_count_file=os.path.abspath("{sample}/counts_files/{sample}.spot.count.out"),
+        cluster_count_filter_file=os.path.abspath("{sample}/counts_files/{sample}.cluster_filter.count.out"),
+        ind_count_filter_file=os.path.abspath("{sample}/counts_files/{sample}.ind_filter.count.out"),
+        cluster_info=os.path.abspath("{sample}/cluster_info/result/{sample}_cluster.txt"),
+        prior_file=os.path.abspath("{sample}/{sample}.prior.out"),
+        cell_num_file=os.path.abspath("{sample}/refined_umi_read_cellNum.txt")
     output:
-        ind_geno_file="{sample}/geno_files/{sample}.ind_genotype.out",
-        ind_geno_filter_file="{sample}/geno_files/{sample}.ind_genotype_filter.out",
-        ind_germ_file="{sample}/geno_files/{sample}.germ_genotype.out",
-        cluster_vaf_file="{sample}/geno_files/{sample}.cluster_vaf.out",
-        spot_genotype_file="{sample}/geno_files/{sample}.spot_genotype.out"
+        ind_geno_file=os.path.abspath("{sample}/geno_files/{sample}.ind_genotype.out"),
+        ind_geno_filter_file=os.path.abspath("{sample}/geno_files/{sample}.ind_genotype_filter.out"),
+        ind_germ_file=os.path.abspath("{sample}/geno_files/{sample}.germ_genotype.out"),
+        cluster_vaf_file=os.path.abspath("{sample}/geno_files/{sample}.cluster_vaf.out"),
+        spot_genotype_file=os.path.abspath("{sample}/geno_files/{sample}.spot_genotype.out")
+    conda: "SpaceTracer"
     shell:
         """
+        source activate SpaceTracer
         python {srcPath}/2_run_genotyper.py \
             --spot_count {input.spot_count_file} \
             --cluster_count {input.cluster_count_filter_file} \
@@ -198,34 +236,35 @@ rule genotyper:
 
 rule get_features:
     input:
-        spacerranger_indir=spacerangerResult+"/outs" ,
+        spacerranger_indir=spacerangerResult+"/outs",
         tissue_positions=spacerangerResult+"/outs/spatial/tissue_positions.csv",
 
         genome_fa=GENOME_FA,
-        bam_file="{sample}/bam_filter/IN.bam",
-        bam_filter_file="{sample}/bam_filter/IN_filter.bam",
-        h5ad_file="{sample}/cluster_info/result/{sample}_results.h5ad",
+        bam_file=os.path.abspath("{sample}/bam_filter/IN.bam"),
+        bam_filter_file=os.path.abspath("{sample}/bam_filter/IN_filter.bam"),
+        h5ad_file=os.path.abspath("{sample}/cluster_info/result/{sample}_results.h5ad"),
 
-        spot_count_file="{sample}/counts_files/{sample}.spot.count.out",
-        cluster_count_filter_file="{sample}/counts_files/{sample}.cluster_filter.count.out",
-        ind_count_filter_file="{sample}/counts_files/{sample}.ind_filter.count.out",
-        cluster_info="{sample}/cluster_info/result/{sample}_cluster.txt",
-        prior_file="{sample}/{sample}.prior.out",
-        ind_geno_filter_file="{sample}/geno_files/{sample}.ind_genotype_filter.out",
-        ind_germ_file="{sample}/geno_files/{sample}.germ_genotype.out",
-        cluster_vaf_file="{sample}/geno_files/{sample}.cluster_vaf.out",
-        spot_genotype_file="{sample}/geno_files/{sample}.spot_genotype.out"
+        spot_count_file=os.path.abspath("{sample}/counts_files/{sample}.spot.count.out"),
+        cluster_count_filter_file=os.path.abspath("{sample}/counts_files/{sample}.cluster_filter.count.out"),
+        ind_count_filter_file=os.path.abspath("{sample}/counts_files/{sample}.ind_filter.count.out"),
+        cluster_info=os.path.abspath("{sample}/cluster_info/result/{sample}_cluster.txt"),
+        prior_file=os.path.abspath("{sample}/{sample}.prior.out"),
+        ind_geno_filter_file=os.path.abspath("{sample}/geno_files/{sample}.ind_genotype_filter.out"),
+        ind_germ_file=os.path.abspath("{sample}/geno_files/{sample}.germ_genotype.out"),
+        cluster_vaf_file=os.path.abspath("{sample}/geno_files/{sample}.cluster_vaf.out"),
+        spot_genotype_file=os.path.abspath("{sample}/geno_files/{sample}.spot_genotype.out")
     output:
-        spatial_feature_file="{sample}/features_dir/{sample}.spatial_feature.txt",
-        phase_beforeUMIcombination_file="{sample}/features_dir/{sample}.phase_beforeUMIcombination.txt",
-        phase_afterUMIcombination_file="{sample}/features_dir/{sample}.phase_afterUMIcombination.txt",
-        feature_file="{sample}/features_dir/{sample}.features.txt",
-        hFDR_file="{sample}/features_dir/{sample}.features.add_hFDR.txt"
+        spatial_feature_file=os.path.abspath("{sample}/features_dir/{sample}.spatial_feature.txt"),
+        phase_beforeUMIcombination_file=os.path.abspath("{sample}/features_dir/{sample}.phase_beforeUMIcombination.txt"),
+        phase_afterUMIcombination_file=os.path.abspath("{sample}/features_dir/{sample}.phase_afterUMIcombination.txt"),
+        feature_file=os.path.abspath("{sample}/features_dir/{sample}.features.txt"),
+        hFDR_file=os.path.abspath("{sample}/features_dir/{sample}.features.add_hFDR.txt")
 
     threads: int(THREADS)
-
+    conda: "SpaceTracer"
     shell:
         """
+        source activate SpaceTracer
         python {srcPath}/3_run_get_features.py \
             --fasta {input.genome_fa} \
             --raw_bam {input.bam_file} \
@@ -255,14 +294,17 @@ rule get_features:
 
 rule pred:
     input:
-        hFDR_file="{sample}/features_dir/{sample}.features.add_hFDR.txt"
+        hFDR_file=os.path.abspath("{sample}/features_dir/{sample}.features.add_hFDR.txt")
 
     output:
-        pred_true="{sample}/predict/results/{sample}_total_pred_truesites.txt"
+        pred_true=os.path.abspath("{sample}/predict/results/{sample}_pred_truesites.txt")
+    conda: "SpaceTracer"
     shell:
         """
+        source activate SpaceTracer
         python {srcPath}/4_run_model_predict.py \
             --input {input.hFDR_file} \
-            --outdir {wildcards.sample} \
-            --outprefix {wildcards.sample}/predict
+            --model_dir {model_dir} \
+            --outdir {wildcards.sample}/predict \
+            --outprefix {wildcards.sample}
         """
