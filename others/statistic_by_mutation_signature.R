@@ -1,7 +1,6 @@
 ##Author: Zhirui Yang
 ##Date: 2024-07-26
 ##Details: This is one script to calculate hFDR.
-.libPaths("/home/douyanmeiLab/yangzhirui/R/x86_64-pc-linux-gnu-library/4.0")
 args <- commandArgs(trailingOnly = TRUE)
 
 

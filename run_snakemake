@@ -10,7 +10,6 @@ import uuid
 from shutil import copyfile
 
 configfile: "config.txt" 
-shell.prefix("source ~/.bashrc; conda activate sl_beifen; module load samtools; module load bcftools;module load bedtools;module load vcftools; module load R/4.0.5 ")
 SAMPLE=config["sample"]
 THREADS=config["threads"]
 readLen=config["readLen"]
