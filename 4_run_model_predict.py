@@ -28,7 +28,7 @@ if __name__ == '__main__':
     parser.add_argument("--model_dir", required=False, default="./models_trained/tumor_skin_model", help="the directory of the trained models (default=./models_trained/tumor_skin_model)")
     parser.add_argument("--model_name", required=False, default="tumor_skin_model", help="the sample name of the trained models default=tumor_skin_model")
     parser.add_argument("--random_seed", required=False, default=100, type=int, help="the random seed (default=100)")
-    parser.add_argument("--train", required=False, default=True, type=str2bool, choices=[True, False], help="Boolean variable for whether training the models or not (default=True)")
+    parser.add_argument("--train", required=False, default=False, type=str2bool, choices=[True, False], help="Boolean variable for whether training the models or not (default=True)")
     parser.add_argument("--true_sites", required=False, default=[], help="the manually checked true somatic mutation list (a text file or a list, default=[])")
     parser.add_argument("--artifact_sites", required=False, default=[], help="the list of artifact sites (a text file or a list, default=[])")
     parser.add_argument("--thr_altcount", required=False, default=5, type=int, help="the threshold of the alternative alleles per site (default=5)")

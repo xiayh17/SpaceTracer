@@ -430,12 +430,6 @@ def calculate_phased_haplo(geno_count_dict, germline, mutant, h1,h2):
         except:
             mut_h2=0
 
-        # detail_count=germline_list[0]+","+ref+":"+str(ref_h1)+";"+\
-        #         germline_list[0]+","+alt+":"+str(ref_h2)+";"+\
-        #         germline_list[1]+","+ref+":"+str(alt_h1)+";"+\
-        #         germline_list[1]+","+alt+":"+str(alt_h2)+";"+\
-        #         mutant+","+ref+":"+str(mut_h1)+";"+\
-        #         mutant+","+alt+":"+str(mut_h2)
         detail_count_list=[germline_list[0]+","+h1+":"+str(ref_h1), 
                            germline_list[0]+","+h2+":"+str(ref_h2),
                            germline_list[1]+","+h1+":"+str(alt_h1),
@@ -460,7 +454,7 @@ def calculate_phased_haplo(geno_count_dict, germline, mutant, h1,h2):
         
         elif ref_alt_phased and mut_differ:
             haplo="haplo=3"
-            phased="yes"
+            # phased="yes"
             annotated_type="mut_mosaic"
 
         elif ref_alt_phased and (not mut_differ):
@@ -592,7 +586,7 @@ def phase_no_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_ba
         # print("no")
         return []
     
-    print(gene_name,"start")
+    # print(gene_name,"start")
     in_bam_read=pysam.AlignmentFile(in_bam_name, "rb", reference_filename=ref_fasta,ignore_truncation=True)
     # candidate_allele_info=pos_candidate_dict["mosaic_pos"]+pos_candidate_dict["informative_SNP"]
     candidate_allele_info=list(set(count_allele))
@@ -718,7 +712,7 @@ def phase_no_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_ba
 
     # del per_read_genotypes_count,count_result,geno_count_dict,pos_candidate_dicts
     #del per_read_genotypes_quality
-    print(gene_name,"finished")
+    # print(gene_name,"finished")
     return out_list
                 
 
