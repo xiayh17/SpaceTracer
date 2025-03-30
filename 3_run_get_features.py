@@ -283,7 +283,7 @@ def main():
         del results
         outfile.close()                
         
-        shutil.rmtree(tmpdir)  
+        # shutil.rmtree(tmpdir)  
 
     
     def add_hFDR():
