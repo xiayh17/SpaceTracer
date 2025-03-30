@@ -15,7 +15,7 @@ from pybedtools import BedTool
 # import sys
 from math import log10,ceil
 from functools import reduce
-from module.UMI_combine import calculate_UMI_combine_phred,get_most_candidate_allele,handle_cigar,handle_seq,handle_pos,handle_quality_matrix,UMI_combination_spot
+from module.UMI_combine import handle_cigar,handle_seq,handle_pos,handle_quality_matrix,UMI_combination_spot
 from utils import get_chr_size
 # from utils import check_dir
 # from memory_profiler import profile
@@ -43,12 +43,12 @@ def handel_candidate_informative_SNP_site(species,germline_file_name, tmp_dir):
     if species=="human":
         run_shell="awk -F'\t' '$3 == \"het\" {split($4, allele, \",\");split($5, allele_count, \",\");if (allele_count[1] > 20 && allele_count[2] > 20) " \
                     "{split($6, prior, \",\");if (prior[1] > 0.01 && prior[2] > 0.01) " \
-                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s > %s" \
+                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s |sort -u> %s" \
                     "" % (germline_file_name, site_bed_file)
     else:
         run_shell="awk -F'\t' '$3 == \"het\" {split($4, allele, \",\");split($5, allele_count, \",\");if (allele_count[1] > 20 && allele_count[2] > 20) " \
                     "{split($6, prior, \",\");if (prior[1] > 0 && prior[2] > 0) " \
-                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s > %s" \
+                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s |sort -u> %s" \
                     "" % (germline_file_name, site_bed_file)
 
     result=subprocess.run(run_shell,shell=True)

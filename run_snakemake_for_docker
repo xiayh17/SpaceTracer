@@ -306,5 +306,6 @@ rule pred:
             --input {input.hFDR_file} \
             --model_dir {model_dir} \
             --outdir {wildcards.sample}/predict \
-            --outprefix {wildcards.sample}
+            --outprefix {wildcards.sample} \
+            --train FALSE --thr_altcount 5 --phase_refine FALSE  --save FALSE
         """
