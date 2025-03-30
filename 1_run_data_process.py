@@ -78,6 +78,7 @@ def main():
         print("All count files (spot/cell, cluster and ind) have been finished before, if you want to rerun them, please use --rerun")
 
     check_output(ind_count_filter_file,print_log=True)
+    print("Finish combine UMI!")
 
 ## parameters
 parser = argparse.ArgumentParser()
