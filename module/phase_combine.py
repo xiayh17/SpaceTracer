@@ -46,12 +46,12 @@ def handel_candidate_informative_SNP_site(species,germline_file_name, tmp_dir):
     if species=="human":
         run_shell="awk -F'\t' '$3 == \"het\" {split($4, allele, \",\");split($5, allele_count, \",\");if (allele_count[1] > 20 && allele_count[2] > 20) " \
                     "{split($6, prior, \",\");if (prior[1] > 0.01 && prior[2] > 0.01) " \
-                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s > %s" \
+                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s |sort -u> %s" \
                     "" % (germline_file_name, site_bed_file)
     else:
         run_shell="awk -F'\t' '$3 == \"het\" {split($4, allele, \",\");split($5, allele_count, \",\");if (allele_count[1] > 20 && allele_count[2] > 20) " \
                     "{split($6, prior, \",\");if (prior[1] > 0 && prior[2] > 0) " \
-                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s > %s" \
+                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s |sort -u> %s" \
                     "" % (germline_file_name, site_bed_file)
 
     result=subprocess.run(run_shell,shell=True)
@@ -68,7 +68,7 @@ def short_bed_file(gene_review_file, site_bed_file, tmp_dir):
     tmp=str(uuid.uuid4())
 
     short_gene_review_file=os.path.join(tmp_dir,os.path.basename(gene_review_file)+tmp+".tmp.short.genereview.bed")
-    result=subprocess.run("bedtools intersect -a %s -b %s -u | grep -v \"MT-\" > %s" % \
+    result=subprocess.run("bedtools intersect -a %s -b %s -u | grep -v \"MT-\" |sort -u> %s" % \
                           (gene_review_file, site_bed_file, short_gene_review_file),shell=True)
     if result.returncode!=0:
         print(f'Something wrong when generate the shorted gene review file for {gene_review_file}.')
@@ -117,10 +117,6 @@ def handle_genereview_file(review_file,chrom_colum=1,pos_start=2,pos_end=3,gene_
 
 
 def short_mosaic_sites_and_combine_with_germ(ind_geno_file, germ_bed_file, tmp_dir):
-    """
-    ind_geno_file:
-        #chrom	site	ID	germline	mutant	cluster	spot_number	consensus_read_count	genotype	p_mosaic	Gi	vaf
-    """
     tmp=str(uuid.uuid4())
 
     short_ind_file=os.path.join(tmp_dir,os.path.basename(ind_geno_file)+tmp+".tmp.short.mosaic.bed")
@@ -135,106 +131,7 @@ def short_mosaic_sites_and_combine_with_germ(ind_geno_file, germ_bed_file, tmp_d
 
     return short_ind_file, combine_ind_germ_file
 
-
-### This four function are used to get right quality and base from pysam 
-##  not used!!!!!!!!!!!
-def get_geno_from_alignment(pos,item,CBtag,UBtag):
-    def handle_cigar(ciagr_symbol):
-        '''
-        ## handel cigar
-        # [(0, 76), (2, 1), (0, 33), (3, 139241), (0, 11)]
-        # '76M1D33M139241N11M'
-        # the 1st is symbol; and the 2nd is count
-        # 0: Match; 1: Insertion; 2: deletion; 3: N; 4: S; 5: H; 6: P; 7: =; 8: X
-        '''
-        seq_length_before = 0
-        pos_length_before = 0
-
-        seq_cut_start = None; seq_cut_end = None
-        pos_cut=[]
-        for cigars, i in zip(ciagr_symbol,range(1,len(ciagr_symbol)+1)):
-            symbol = cigars[0]
-            count = cigars[1]
-            if symbol in [5,6,7,8]:
-                # an api for handeling mapping issues "HP=X"
-                print(ciagr_symbol)  ## LOG
-            elif symbol in [0, 1, 4]:
-                # measure the seq length 
-                seq_length_before += count
-                if symbol == 0:
-                    pos_length_before += count
-                elif symbol == 4:
-                    # whether "S" is in this read
-                    if i == 1:
-                        # whether the "S" is in the head or tail
-                        seq_cut_start = seq_length_before
-                    elif i ==len(ciagr_symbol):
-                        seq_cut_end = seq_length_before
-                    else:
-                        print(ciagr_symbol) ## LOG
-                elif symbol == 1:
-                    # whether the "I" is in the cigar
-                    pos_cut.append((pos_length_before,count))
-            else:
-                pass
-        seq_cut = (seq_cut_start, seq_cut_end)
-        return seq_cut, pos_cut
-
-    def handle_seq(seq, seq_cut):
-        # only support one time for cut
-        cut_seq=seq[seq_cut[0]:seq_cut[1]]
-        return cut_seq
-
-    def handle_pos(pos_matrix,pos_cut):
-        if len(pos_cut) == 0:
-            cut_pos_matrix = pos_matrix
-        elif len(pos_cut) == 1:
-            times = pos_cut[0][1]
-            pos = pos_cut[0][0]
-            cut_pos_matrix = pos_matrix[0:pos] + [""] * times + pos_matrix[pos:]
-        else:
-            start = 0
-            cut_pos_matrix = []
-            for item in range(len(pos_cut)):
-                pos = pos_cut[item][0]; times = pos_cut[item][1]
-                cut_pos_matrix = cut_pos_matrix + pos_matrix[start:pos] + [""] * times
-                start=pos
-                #print(cut_pos_matrix)
-            last_pos = pos_cut[-1][0]
-            cut_pos_matrix = cut_pos_matrix + pos_matrix[last_pos:]
-        return cut_pos_matrix
-
-    def handle_quality_matrix(mutation_in_cutseq_index,seq,cut_seq):
-        if len(cut_seq[mutation_in_cutseq_index:]) >= len(cut_seq[:mutation_in_cutseq_index]):
-            query_str = cut_seq[mutation_in_cutseq_index:]
-            raw_index = seq.index(query_str)
-        else:
-            query_str = cut_seq[:mutation_in_cutseq_index]
-            raw_index = seq.index(query_str) + len(query_str)
-        return raw_index
-
-    Name,geno,quality='','',''
-    
-    try:
-        CB=item.get_tag(CBtag).strip()
-        UB=item.get_tag(UBtag).strip()
-        Name=CB+"_"+UB
-        pos_index=pos-1
-
-        seq_cut, pos_cut = handle_cigar(item.cigar)
-        cut_seq=handle_seq(item.seq, seq_cut)
-        cut_pos=handle_pos(item.get_reference_positions(), pos_cut)
-        raw_index = handle_quality_matrix(cut_pos.index(pos_index),item.seq,cut_seq)
-        quality=item.get_forward_qualities()[raw_index]
-
-        if pos_index in cut_pos:
-            # effective_DP += 1
-            geno = cut_seq[cut_pos.index(pos_index)]            
-    except:
-        pass
-
-    return Name,geno,quality
-        
+      
 # util
 def check_dir(dir):
     if os.path.exists(dir):

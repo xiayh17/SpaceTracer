@@ -154,10 +154,13 @@ def main():
 
 
         out_file=open(phase_afterUMIcombination_file,"w")
+        res=[]
         for lists in results:
-            for line in lists:
-                out_text="\t".join([str(i) for i in line])
-                out_file.write(f'{out_text}\n')
+            if lists not in res:
+                res.append(lists)
+                for line in lists:
+                    out_text="\t".join([str(i) for i in line])
+                    out_file.write(f'{out_text}\n')
 
         out_file.close()
         shutil.rmtree(tmp_dir)  
@@ -189,10 +192,13 @@ def main():
 
 
         out_file=open(phase_beforeUMIcombination_file,"w")
+        res=[]
         for lists in results:
-            for line in lists:
-                out_text="\t".join([str(i) for i in line])
-                out_file.write(f'{out_text}\n')
+            if lists not in res:
+                res.append(lists)
+                for line in lists:
+                    out_text="\t".join([str(i) for i in line])
+                    out_file.write(f'{out_text}\n')
             
         out_file.close()
         shutil.rmtree(tmp_dir)  

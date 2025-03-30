@@ -1337,6 +1337,8 @@ def handle_h5ad_file(h5ad_file):
 #     command=f"echo -e \"{identifier_line}\" |perl {perl_script} - {query_file} {index_in_query}|sort -u"
 #     try:
 #         result=subprocess.check_output(command,text=True,shell=True)
+#         # result=subprocess.run(command, capture_output=True,shell=True)
+#         print(result)
 #         return result
 #     except:
 #         print(f"Something wrong when run the command: {command}")
@@ -1351,6 +1353,7 @@ def get_intergration_from_identifier_and_file(compare_pl_path,identifier,query_f
     identifier_line="\t".join(identifier.strip().split("_"))
     try:
         echo_proc = subprocess.Popen(['echo', '-e', identifier_line], stdout=subprocess.PIPE, text=True)
+        # print("echo",echo_proc.returncode)
         index_args = index_in_query.split()
         perl_args = ['perl', perl_script, '-', query_file] + index_args
         perl_proc = subprocess.Popen(
@@ -1360,14 +1363,18 @@ def get_intergration_from_identifier_and_file(compare_pl_path,identifier,query_f
             stderr=subprocess.PIPE,  # Capture error output
             text=True
         )
+        # print("perl",perl_proc.returncode)
         echo_proc.stdout.close()
         sort_proc = subprocess.Popen(['sort', '-u'], 
                                     stdin=perl_proc.stdout, 
                                     stdout=subprocess.PIPE, 
                                     stderr=subprocess.PIPE,
                                     text=True)
+        # print("sort",sort_proc.returncode)
+        
         perl_proc.stdout.close()
         result, sort_err = sort_proc.communicate()
+        # print('result',result)
         _, perl_err = perl_proc.communicate()
         if perl_err:
             print(f"Perl error: {perl_err}")
@@ -1377,9 +1384,10 @@ def get_intergration_from_identifier_and_file(compare_pl_path,identifier,query_f
             return result
         else:
             command = f"echo -e \"{identifier_line}\" | perl {perl_script} - {query_file} {index_in_query} | sort -u"
+            # print(command)
             try:
                 debug_result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT, text=True)
-
+                # print('debug:',debug_result)
                 return debug_result
             except subprocess.CalledProcessError as e:
                 print(f"Error: {e.output}")
@@ -1433,10 +1441,32 @@ def get_info_by_bedtools(tmp_mappbablity_file,identifier):
     try:
         result=subprocess.check_output(command,shell=True,text=True)
         return result
-    except:
-        print(f"Something wrong when run {command}!")
+    except Exception as e:
+        print(f"Something went wrong when running bedtools intersect: {e}")
         return ""
 
+
+# def get_info_by_bedtools(tmp_mappbablity_file, identifier):
+#     chrom, pos, _, _ = handle_posname(identifier)
+#     identifier_line = f"{chrom}\t{str(pos)}\t{str(pos)}"
+#     try:
+#         # Create echo process
+#         echo_proc = subprocess.Popen(['echo', '-e', identifier_line], stdout=subprocess.PIPE, text=True)
+#         # Create bedtools process, connecting echo's output to bedtools' input
+#         bedtools_proc = subprocess.Popen(
+#             ['bedtools', 'intersect', '-a', tmp_mappbablity_file, '-b', '-'],
+#             stdin=echo_proc.stdout,
+#             stdout=subprocess.PIPE,
+#             text=True
+#         )
+#         # Close echo's stdout to avoid deadlock
+#         echo_proc.stdout.close()
+#         # Get the final result
+#         result, _ = bedtools_proc.communicate()
+#         return result
+#     except Exception as e:
+#         print(f"Something went wrong when running bedtools intersect: {e}")
+#         return ""
 
 def get_info_by_grep(aim_file,query_id):
     """
