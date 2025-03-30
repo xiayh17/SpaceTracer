@@ -405,8 +405,14 @@ class Features:
                 exon_distance=abs(exon_boundary_1) if abs(exon_boundary_1)<abs(exon_boundary_1) else abs(exon_boundary_2)
                 self.distanceExon.append(exon_distance)
         except:
-            print(sline)
-            pass
+            try:
+                if sline[3]!=".":
+                    exon_boundary_1=int(sline[6])-int(sline[1]); exon_boundary_2=int(sline[7])-int(sline[1])
+                    exon_distance=abs(exon_boundary_1) if abs(exon_boundary_1)<abs(exon_boundary_1) else abs(exon_boundary_2)
+                    self.distanceExon.append(exon_distance)
+            except:
+                pass
+                print(sline)
         
 
     # def add_info_from_phase(self,phase_result,phase_type="combine"):

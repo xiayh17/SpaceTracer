@@ -161,7 +161,7 @@ def handle_reads_per_pos_read_count(bam_handle,chrom,pos,run_type):
             # effective_DP += 1
             geno = cut_seq[cut_pos.index(pos_index)]
             if geno not in "ATCG":
-                print("not ATCG ", item)
+                # print("not ATCG ", item)
                 continue
 
             raw_index = handle_quality_matrix(cut_pos.index(pos_index),item.seq,cut_seq)
@@ -170,7 +170,7 @@ def handle_reads_per_pos_read_count(bam_handle,chrom,pos,run_type):
                 quality=qualities[raw_index]
             except:
                 # qualities=None
-                print("not qualities ", item)
+                # print("not qualities ", item)
                 # i+=1
                 continue
 

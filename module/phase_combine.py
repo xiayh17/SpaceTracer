@@ -274,27 +274,6 @@ def handle_pos_bed(bed_file):
     return mutation_identifier_list
 
 
-# def read_ind_genotype(result_file):
-#     '''
-#     input:
-#     chr1    14623   C       A,<*>
-#     chr1    14653   C       T,<*>
-    
-#     output:
-#     list: [("chrX", "119811135", "T", "C,<*>"),...]
-#     '''
-#     mutation_identifier_list=[]
-#     f=open(result_file,"r")
-#     for line in f.readlines():
-#         if line[0]!="#":
-#             s=line.strip().split()
-#             chrom=s[0];pos=s[1];germline=s[15];mutation=s[16]
-#             mutation="_".join([str(chrom),str(pos),str(germline),str(mutation)])
-#             mutation_identifier_list.append(mutation)
-    
-#     return mutation_identifier_list
-
-
 def filter_geno_dict(count_result, scale_ratio=5):
     '''
     example of count_result: {'C,C': 25548, 'G,T': 22144, 'G,C': 178, 'C,T': 55}
@@ -621,7 +600,7 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
         # print("no")
         return []
     
-    print(gene_name,"start")
+    # print(gene_name,"start")
     # candidate_allele_info=pos_candidate_dict["mosaic_pos"]+pos_candidate_dict["informative_SNP"]
     candidate_allele_info=list(set(count_allele))
     #print(candidate_allele_info)
@@ -772,7 +751,7 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
                 # print(candidate_allele_info[0],mut,haplo,phased,annotated_type,"\n", geno_count_dict)
             else:
                 pass
-    print(gene_name,"finished")
+    # print(gene_name,"finished")
     return out_list
    
 

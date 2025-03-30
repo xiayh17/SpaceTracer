@@ -3,7 +3,6 @@
 ##Details: This is one script to calculate hFDR.
 args <- commandArgs(trailingOnly = TRUE)
 
-
 if ("-h" %in% args || "--help" %in% args) {
   cat("Usage: Rscript script.R feature_all_result outpath [bkg_file lysis_profile pcr_profile]\n")
   cat("Arguments:\n")
