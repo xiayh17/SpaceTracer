@@ -102,12 +102,12 @@ tar -zxvf hg38.umap.tar.gz
 
 ```
 
-
-
 ### GTEx gene expression data
 You could get the GTEx gene expression data from the [GTEx Portal](https://gtexportal.org/home/) or [dbGaP website](https://www.ncbi.nlm.nih.gov/gap/).
 
 
+### Figshare
+All necessary resources could be downloaded from https://figshare.com/s/c7836f53c4eafb556ee1.
 
 
 ## Run SpaceTracer with Snakemake
@@ -151,7 +151,7 @@ Ensure the `config.txt` file is correctly set up with the required input paths a
 | `bkg` | Background error file. |
 | `cluster` | Optional. Spots cluster file. |
 | `h5ad_file` | Optional. Spatial transcriptomics data information file in h5ad format. |
-All these resource can be downloaded from https://figshare.com/s/c7836f53c4eafb556ee1
+
 ### Results
 The final somatic mutation list detected would be saved in the `$savePATH/$sample/predict/results/demo_total_pred_truesites.txt` file.
 
