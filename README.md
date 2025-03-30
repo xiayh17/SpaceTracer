@@ -41,6 +41,7 @@ We have created a docker image `spacetracer` with all dependencies installed and
 docker pull xiayh17/spacetracer
 docker run -it -v $(pwd):/mnt/workflow xiayh17/spacetracer bash
 ```
+Or you could also find the docker image file in https://figshare.com/s/c7836f53c4eafb556ee1, with name "spacetracer_latest.sif".
 
 This code runs a Docker container interactively (`-it`), mounts the current working directory (`$(pwd)`) to the `/mnt/workflow` directory inside the container, and starts a bash shell.
 
