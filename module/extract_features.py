@@ -237,10 +237,16 @@ class Features:
         self.RPBZ="no"
         self.SGB="no"
 
-        self.UMI_number_per_spot_s="no"
-        self.UMI_number_per_spot_p="no"
         self.read_number_per_spot_s="no"
         self.read_number_per_spot_p="no"
+
+        self.UMI_number_per_spot_s="no"
+        self.UMI_number_per_spot_p="no"
+
+        self.ref_UMI_number_per_spot_max="no"
+        self.alt_UMI_number_per_spot_max="no"
+        self.ref_UMI_number_per_spot_median="no"
+        self.alt_UMI_number_per_spot_median="no"
 
         self.alt2_proportion_consensus="no"
         self.dp_consensus="no"
@@ -615,8 +621,8 @@ class Features:
         """
         def simple_to_get_list(read_info_dict,ref_allele,alt_allele,var):
             # print(ref_allele,alt_allele, ref_allele.split(","))
-            return_ref_list=[int(k) for allele in ref_allele.split(",") for k in read_info_dict[allele][var] if k !=""]
-            return_alt_list=[int(k) for allele in alt_allele.split(",") for k in read_info_dict[allele][var] if k !=""]
+            return_ref_list=[float(k) for allele in ref_allele.split(",") for k in read_info_dict[allele][var] if k !=""]
+            return_alt_list=[float(k) for allele in alt_allele.split(",") for k in read_info_dict[allele][var] if k !=""]
             return return_ref_list,return_alt_list
             
         get_list=partial(simple_to_get_list,read_info_dict,self.ref,self.alt)
@@ -750,6 +756,9 @@ class Features:
 
         ref_distance_to_end,alt_distance_to_end=get_list("distance_to_end")
         self.distance_to_end_s,self.distance_to_end_p=do_wilicox_sum_test(ref_distance_to_end,alt_distance_to_end,type="list")
+        
+        ref_distance_to_end_by_UMI,alt_distance_to_end_by_UMI=get_list("UMI_end")
+        self.distance_to_end_by_UMI_s,self.distance_to_end_by_UMI_p=do_wilicox_sum_test(ref_distance_to_end_by_UMI,alt_distance_to_end_by_UMI,type="list")
 
         ref_distance_to_end_remove_clip,alt_distance_to_end_remove_clip=get_list("distance_to_end_remove_clip")
         self.distance_to_end_remove_clip_s,self.distance_to_end_remove_clip_p=do_wilicox_sum_test(ref_distance_to_end_remove_clip,alt_distance_to_end_remove_clip,type="list")
@@ -823,8 +832,15 @@ class Features:
             ref_read_number_per_spot,alt_read_number_per_spot=get_list("read_number_per_spot")
             self.read_number_per_spot_s,self.read_number_per_spot_p = do_wilicox_sum_test(ref_read_number_per_spot, alt_read_number_per_spot,method="two-sided",type="list")
         except:
+            print(self.identifier,"does not have read_number_per_spot info")
+
+        try:
+            ref_spot_dp_list, alt_spot_dp_list=get_list("UMI_number_per_spot")
+            self.UMI_number_per_spot_s,self.UMI_number_per_spot_p = do_wilicox_sum_test(ref_spot_dp_list, alt_spot_dp_list,method="two-sided",type="list")
+            self.ref_UMI_number_per_spot_median,self.alt_UMI_number_per_spot_median = np.median(ref_spot_dp_list),np.median(alt_spot_dp_list)
+            self.ref_UMI_number_per_spot_max,self.alt_UMI_number_per_spot_max = max(ref_spot_dp_list),max(alt_spot_dp_list)
+        except:
             print(self.identifier,"does not have UMI_number_per_spot info")
-        
         # alt_consistence_prop=sum(alt_UMI_consistence)/sum([1 for i in read_info_dict[self.alt]["UMI_consistence_prop"] if i !=0.0])
         # total_UMI_contain_alt=[i for i in read_info_dict[self.alt]["UMI_consistence_prop"] if i !=0.0]
         # alt_consistence_hard=sum([1 for i in total_UMI_contain_alt if i ==1.0])/len(total_UMI_contain_alt)
@@ -1040,6 +1056,10 @@ class Features:
             'UMI_number_per_spot_p': handle_p_value_log10(self.UMI_number_per_spot_p),
             'read_number_per_spot_s': self.read_number_per_spot_s,
             'read_number_per_spot_p': handle_p_value_log10(self.read_number_per_spot_p),
+            'ref_UMI_number_per_spot_max': self.ref_UMI_number_per_spot_max,
+            'alt_UMI_number_per_spot_max': self.alt_UMI_number_per_spot_max,
+            'ref_UMI_number_per_spot_median': self.ref_UMI_number_per_spot_median,
+            'alt_UMI_number_per_spot_median': self.alt_UMI_number_per_spot_median,
             # 'nearSNV': self.nearSNV,
             # 'nearIND_DEL': self.nearIND_DEL,
             # 'nearIND_DEL_length': self.nearIND_DEL_length,
@@ -1055,7 +1075,10 @@ class Features:
             'alt_read_number_perUMI_median':self.alt_read_number_perUMI_median,
             'ref_read_number_perUMI_max':self.ref_read_number_perUMI_max,
             'alt_read_number_perUMI_max':self.alt_read_number_perUMI_max,
-
+            'ref_UMI_number_per_spot_max': self.ref_UMI_number_per_spot_max,
+            'alt_UMI_number_per_spot_max': self.alt_UMI_number_per_spot_max,
+            'ref_UMI_number_per_spot_median': self.ref_UMI_number_per_spot_median,
+            'alt_UMI_number_per_spot_median': self.alt_UMI_number_per_spot_median,
             # site info
             'spotNum': self.spotNum,
             'combine_nearest_phase_haplotype':self.combine_nearest_phase_haplotype,
@@ -1633,6 +1656,10 @@ def get_context_from_reference(reference_fasta,major_read_strand,identifier,prev
 
 def handle_bam_file(bam_file,chrom,pos,ref,alt,CBtag,UBtag,readLen=120):
     exist_CB=[]
+    if "," in ref:
+        one_ref=ref[0]
+    else:
+        one_ref=ref
     result_dict={"A":defaultdict(list), "T":defaultdict(list), "C":defaultdict(list), "G":defaultdict(list), "del":defaultdict(list)}
     for geno in "ATCG":
         result_dict[geno]["dp"]=0
@@ -1743,12 +1770,16 @@ def handle_bam_file(bam_file,chrom,pos,ref,alt,CBtag,UBtag,readLen=120):
                     distance_to_end=right_boundary/readLen
                     result_dict[geno]["reverse_dp"]+=1
                     distance_to_end_remove_clip=right_boundary_remove_clip/len(cut_pos)
+                    distance_to_end_remove_clip=right_boundary_remove_clip/len(cut_pos)
+                    distance_to_end_remove_clip_save=right_boundary_remove_clip
 
                 else:
                     distance_to_end=left_boundary/readLen
                     result_dict[geno]["forward_dp"]+=1
                     distance_to_end_remove_clip=left_boundary_remove_clip/len(cut_pos)
-
+                    distance_to_end_remove_clip=left_boundary_remove_clip/len(cut_pos)
+                    distance_to_end_remove_clip_save=left_boundary_remove_clip
+                    
                 result_dict[geno]["distance_to_end"].append(distance_to_end)
                 result_dict[geno]["distance_to_end_remove_clip"].append(distance_to_end_remove_clip)
 
@@ -1790,19 +1821,24 @@ def handle_bam_file(bam_file,chrom,pos,ref,alt,CBtag,UBtag,readLen=120):
                 if UMI_name not in site_barcode_UMI_dict[barcode_name].keys():
                     site_barcode_UMI_dict[barcode_name][UMI_name]["count"]=defaultdict(int)
                     site_barcode_UMI_dict[barcode_name][UMI_name]["quality"]={"A":defaultdict(int),"T":defaultdict(int),"C":defaultdict(int),"G":defaultdict(int)}
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end"]=[]
 
                 site_barcode_UMI_dict[barcode_name][UMI_name]["count"][geno]+=1
                 # site_barcode_UMI_dict[barcode_name][UMI_name]["quality"][geno][quality]+=1
-    
+                site_barcode_UMI_dict[barcode_name][UMI_name]["quality"][geno][quality]+=1
+                site_barcode_UMI_dict[barcode_name][UMI_name]["end"].append(distance_to_end_remove_clip_save)
+
     for barcode in site_barcode_UMI_dict.keys():
         read_have_alt=False
         read_number_per_spot=0
+        UMI_number_per_spot=0
+
         # UMI_dp+=len(site_barcode_UMI_dict[barcode].keys())
         for UMI in site_barcode_UMI_dict[barcode]:             
             count_dict=site_barcode_UMI_dict[barcode][UMI]["count"]
-            # quality_dict=site_barcode_UMI_dict[barcode][UMI]["quality"]
-            # phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
-            # candidate_allele,phred=get_most_candidate_allele(phred_dict,ref)
+            quality_dict=site_barcode_UMI_dict[barcode][UMI]["quality"]
+            phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
+            candidate_allele,phred=get_most_candidate_allele(phred_dict,one_ref)
             threshold=1
             norm_count=check_UMIconsistence_for_each_geno(count_dict,threshold)
             if norm_count!=[]:
@@ -1812,17 +1848,21 @@ def handle_bam_file(bam_file,chrom,pos,ref,alt,CBtag,UBtag,readLen=120):
             for geno in "ATCG":
                 if site_barcode_UMI_dict[barcode][UMI]["count"][geno]!=0:
                     result_dict[geno]["GenoSpotNum"]+=1
+                    UMI_number_per_spot+=1
                     # print([count_dict["A"],count_dict["T"],count_dict["C"],count_dict["G"]])
                     result_dict[geno]["read_number_per_UMI"].append(count_dict[geno])
                     read_number_per_spot+=site_barcode_UMI_dict[barcode][UMI]["count"][geno]
 
-            if site_barcode_UMI_dict[barcode][UMI]["count"][alt]!=0:
+            if candidate_allele==alt:
                 read_have_alt=True
         
         if read_have_alt==True:
             result_dict[alt]["read_number_per_spot"].append(read_number_per_spot)
+            result_dict[alt]["UMI_number_per_spot"].append(UMI_number_per_spot)
+
         else:
-            result_dict[ref]["read_number_per_spot"].append(read_number_per_spot)
+            result_dict[one_ref]["read_number_per_spot"].append(read_number_per_spot)
+            result_dict[one_ref]["UMI_number_per_spot"].append(UMI_number_per_spot)
 
     del in_bam_read
     return result_dict, dp
