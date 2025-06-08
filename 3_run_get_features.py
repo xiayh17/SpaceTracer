@@ -303,7 +303,7 @@ def main():
 
     ############# Run #############
     if args.rerun:
-        get_spatial_test_result()
+        # get_spatial_test_result()
         phase_combine()
         phase_no_combine()
         extract_feature()
