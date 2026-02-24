@@ -10,6 +10,9 @@ from math import exp, floor, log, log10,ceil,inf
 import argparse
 from collections import Counter, defaultdict
 import numpy as np
+from functools import reduce
+from scipy import stats
+
 
 ######### check #########
 def check_input(files):
@@ -398,7 +401,6 @@ def str_to_dict(one_string):
 
 
 def do_wilicox_sum_test(input_1,input_2,method="two-sided",type="dict"):
-    from scipy import stats
     if type=="dict":
         input_list1=[]
         input_list2=[]
@@ -419,102 +421,81 @@ def do_wilicox_sum_test(input_1,input_2,method="two-sided",type="dict"):
     return z_statistic,p_value
 
 
-def get_geno_from_alignment(pos,item):
-    def handle_cigar(ciagr_symbol):
-        '''
-        ## handel cigar
-        # [(0, 76), (2, 1), (0, 33), (3, 139241), (0, 11)]
-        # '76M1D33M139241N11M'
-        # the 1st is symbol; and the 2nd is count
-        # 0: Match; 1: Insertion; 2: deletion; 3: N; 4: S; 5: H; 6: P; 7: =; 8: X
-        '''
-        seq_length_before = 0
-        pos_length_before = 0
+def handle_cigar(ciagr_symbol):
+    '''
+    ## handel cigar
+    # [(0, 76), (2, 1), (0, 33), (3, 139241), (0, 11)]
+    # '76M1D33M139241N11M'
+    # the 1st is symbol; and the 2nd is count
+    # 0: Match; 1: Insertion; 2: deletion; 3: N; 4: S; 5: H; 6: P; 7: =; 8: X
+    '''
+    seq_length_before = 0
+    pos_length_before = 0
 
-        seq_cut_start = None; seq_cut_end = None
-        pos_cut=[]
-        for cigars, i in zip(ciagr_symbol,range(1,len(ciagr_symbol)+1)):
-            symbol = cigars[0]
-            count = cigars[1]
-            if symbol in [5,6,7,8]:
-                # an api for handeling mapping issues "HP=X"
-                print(ciagr_symbol)  ## LOG
-            elif symbol in [0, 1, 4]:
-                # measure the seq length 
-                seq_length_before += count
-                if symbol == 0:
-                    pos_length_before += count
-                elif symbol == 4:
-                    # whether "S" is in this read
-                    if i == 1:
-                        # whether the "S" is in the head or tail
-                        seq_cut_start = seq_length_before
-                    elif i ==len(ciagr_symbol):
-                        seq_cut_end = seq_length_before
-                    else:
-                        print(ciagr_symbol) ## LOG
-                elif symbol == 1:
-                    # whether the "I" is in the cigar
-                    pos_cut.append((pos_length_before,count))
-            else:
-                pass
-        seq_cut = (seq_cut_start, seq_cut_end)
-        return seq_cut, pos_cut
-
-    def handle_seq(seq, seq_cut):
-        # only support one time for cut
-        cut_seq=seq[seq_cut[0]:seq_cut[1]]
-        return cut_seq
-
-    def handle_pos(pos_matrix,pos_cut):
-        if len(pos_cut) == 0:
-            cut_pos_matrix = pos_matrix
-        elif len(pos_cut) == 1:
-            times = pos_cut[0][1]
-            pos = pos_cut[0][0]
-            cut_pos_matrix = pos_matrix[0:pos] + [""] * times + pos_matrix[pos:]
+    seq_cut_start = None; seq_cut_end = None
+    pos_cut=[]
+    for cigars, i in zip(ciagr_symbol,range(1,len(ciagr_symbol)+1)):
+        symbol = cigars[0]
+        count = cigars[1]
+        if symbol in [5,6,7,8]:
+            # an api for handeling mapping issues "HP=X"
+            print(ciagr_symbol)  ## LOG
+        elif symbol in [0, 1, 4]:
+            # measure the seq length 
+            seq_length_before += count
+            if symbol == 0:
+                pos_length_before += count
+            elif symbol == 4:
+                # whether "S" is in this read
+                if i == 1:
+                    # whether the "S" is in the head or tail
+                    seq_cut_start = seq_length_before
+                elif i ==len(ciagr_symbol):
+                    seq_cut_end = seq_length_before
+                else:
+                    print(ciagr_symbol) ## LOG
+            elif symbol == 1:
+                # whether the "I" is in the cigar
+                pos_cut.append((pos_length_before,count))
         else:
-            start = 0
-            cut_pos_matrix = []
-            for item in range(len(pos_cut)):
-                pos = pos_cut[item][0]; times = pos_cut[item][1]
-                cut_pos_matrix = cut_pos_matrix + pos_matrix[start:pos] + [""] * times
-                start=pos
-                #print(cut_pos_matrix)
-            last_pos = pos_cut[-1][0]
-            cut_pos_matrix = cut_pos_matrix + pos_matrix[last_pos:]
-        return cut_pos_matrix
+            pass
+    seq_cut = (seq_cut_start, seq_cut_end)
+    return seq_cut, pos_cut
 
-    def handle_quality_matrix(mutation_in_cutseq_index,seq,cut_seq):
-        if len(cut_seq[mutation_in_cutseq_index:]) >= len(cut_seq[:mutation_in_cutseq_index]):
-            query_str = cut_seq[mutation_in_cutseq_index:]
-            raw_index = seq.index(query_str)
-        else:
-            query_str = cut_seq[:mutation_in_cutseq_index]
-            raw_index = seq.index(query_str) + len(query_str)
-        return raw_index
+def handle_seq(seq, seq_cut):
+    # only support one time for cut
+    cut_seq=seq[seq_cut[0]:seq_cut[1]]
+    return cut_seq
 
-    Name,geno,quality='','',''
-    
-    try:
-        CB=item.get_tag("CB").strip()
-        UB=item.get_tag("UB").strip()
-        Name=CB+"_"+UB
-        pos_index=pos-1
+def handle_pos(pos_matrix,pos_cut):
+    if len(pos_cut) == 0:
+        cut_pos_matrix = pos_matrix
+    elif len(pos_cut) == 1:
+        times = pos_cut[0][1]
+        pos = pos_cut[0][0]
+        cut_pos_matrix = pos_matrix[0:pos] + [""] * times + pos_matrix[pos:]
+    else:
+        start = 0
+        cut_pos_matrix = []
+        for item in range(len(pos_cut)):
+            pos = pos_cut[item][0]; times = pos_cut[item][1]
+            cut_pos_matrix = cut_pos_matrix + pos_matrix[start:pos] + [""] * times
+            start=pos
+            #print(cut_pos_matrix)
+        last_pos = pos_cut[-1][0]
+        cut_pos_matrix = cut_pos_matrix + pos_matrix[last_pos:]
+    return cut_pos_matrix
 
-        seq_cut, pos_cut = handle_cigar(item.cigar)
-        cut_seq=handle_seq(item.seq, seq_cut)
-        cut_pos=handle_pos(item.get_reference_positions(), pos_cut)
-        raw_index = handle_quality_matrix(cut_pos.index(pos_index),item.seq,cut_seq)
-        quality=item.get_forward_qualities()[raw_index]
+def handle_quality_matrix(mutation_in_cutseq_index,seq,cut_seq):
+    if len(cut_seq[mutation_in_cutseq_index:]) >= len(cut_seq[:mutation_in_cutseq_index]):
+        query_str = cut_seq[mutation_in_cutseq_index:]
+        raw_index = seq.index(query_str)
+    else:
+        query_str = cut_seq[:mutation_in_cutseq_index]
+        raw_index = seq.index(query_str) + len(query_str)
+    return raw_index
 
-        if pos_index in cut_pos:
-            # effective_DP += 1
-            geno = cut_seq[cut_pos.index(pos_index)]            
-    except:
-        pass
 
-    return Name,geno,quality
 
 
 def get_hard_clip_count(ciagr_symbol):
@@ -849,4 +830,989 @@ def closest_pybedtools(tmp_bed_file,exon_sort_gff_file):
     gff_Bed=BedTool(exon_sort_gff_file)
     mutation_closest=mutation_Bed.closest(gff_Bed)
     return mutation_closest
+
+
+def calc_SegBias_for_one_sample(ref_dp,alt_dp):
+    """
+    adapted from bcftools. Here we removed the condition, which have not only one sample.
+    """
+    nr = alt_dp  # number of observed non-reference reads
+    if not nr:
+        return
+
+    avg_dp = (ref_dp + nr)   # average depth
+    M = floor(nr / avg_dp + 0.5)  # approximate number of variants sampled in the population
+    M = min(max(M, 1), 1)  # Clamp M between 1 and sample number(1)
+    f = M / 2.0   # allele frequency
+    p = nr   # number of variant reads per sample expected if variant not real (Poisson)
+    q = nr / M  # number of variant reads per sample expected if variant is real (Poisson)
+    sum = 0
+    log2 = log(2.0)
+
+
+    oi = alt_dp  # observed number of non-ref reads
+    if oi:
+        tmp = logsumexp2(log(2 * (1 - f)), log(f) + oi * log2 - q)
+        tmp += log(f) + oi * log(q / p) - q + p
+    else:
+        tmp = log(2 * f * (1 - f) * exp(-q) + f**2 * exp(-2 * q) + (1 - f)**2) + p
+    sum += tmp
+
+    return sum
+
+
+def get_intergration_from_identifier_and_one_file(identifier,query_file,index_in_query="0 1 2 3"):
+    """
+    This function is used to get the intergration result from identifier and one special query file.
+    Note: The top 4 columns of query_file must be "chrom pos ref alt"
+    
+    """
+    current_directory = os.path.dirname(os.path.abspath(__file__))
+    compare_pl_path=os.path.join(current_directory,"others/compare_files.pl")
+    perl_script=compare_pl_path
+    identifier_line="\t".join(identifier.strip().split("_"))
+
+    command=f"echo -e \"{identifier_line}\" |perl {perl_script} - {query_file} {index_in_query}|sort -u"
+    try:
+        result=subprocess.check_output(command,text=True,shell=True)
+        return result
+    except:
+        print(f"Something wrong when run the command: {command}")
+        return ""
+
+
+def closest_command(tmp_bed_file,exon_sort_gff_file):
+
+    command=f"bedtools intersect -a {exon_sort_gff_file} -b {tmp_bed_file}"
+    try:
+        results=subprocess.check_output(command,text=True,shell=True)
+
+    except:
+        print(f"Something wrong when run the command: {command}")
+        results=""
+ 
+    return results
+
+
+def closest_pybedtools(tmp_bed_file,exon_sort_gff_file):
+    mutation_Bed=BedTool(tmp_bed_file)
+    # mutation_Bed=BedTool(per_line,from_string=True)
+    gff_Bed=BedTool(exon_sort_gff_file)
+    mutation_closest=mutation_Bed.closest(gff_Bed)
+    return mutation_closest
+
+
+def round_to_nearest_bin(x,bins):
+    return int(np.ceil(x / bins) * bins)
+
+
+def wilcoxon_with_rbc(x, y, alternative='two-sided'):
+    """ 
+    Perform a Wilcoxon rank-sum test with calculating the Rank-Biserial Correlation (RBC) value.
+    Parameters
+    ----------
+    x,y : array_like
+        The data from the two samples.
+    alternative : {'two-sided', 'less', 'greater'}, optional
+        Defines the alternative hypothesis. Default is 'two-sided'.
+        The following options are available:
+        * 'two-sided': one of the distributions (underlying `x` or `y`) is
+          stochastically greater than the other.
+        * 'less': the distribution underlying `x` is stochastically less
+          than the distribution underlying `y`.
+        * 'greater': the distribution underlying `x` is stochastically greater
+          than the distribution underlying `y`.
+    Returns
+    -------
+    statistic : float
+        The test statistic under the large-sample approximation that the
+        rank sum statistic is normally distributed.
+    pvalue : float
+        The p-value of the test.
+    rbc: float
+        The Rank-Biserial Correlation (RBC) value, which is a measure of
+        the strength and direction of the association between the two samples.
+        It ranges from -1 to 1, where:
+        - 1 indicates a perfect positive association,
+        - -1 indicates a perfect negative association,
+        - 0 indicates no association. 
+    """
+    x, y = map(np.asarray, (x, y))
+    n1 = len(x)
+    n2 = len(y)
+    alldata = np.concatenate((x, y))
+    ranked = stats.rankdata(alldata)
+    x_ranks = ranked[:n1]
+    R1 = np.sum(x_ranks)
+    # Mann-Whitney U statistic for group x
+    U = R1 - (n1 * (n1 + 1)) / 2
+    # Rank Biserial Correlation (rbc)
+    rbc = (2 * U) / (n1 * n2) - 1
+    # statistic and p-value with large number normal approximation
+    statistic, p_value = stats.ranksums(x, y, alternative=alternative)
+    return statistic, p_value, rbc
+
+
+
+def calculate_rbc_for_paired_wilcoxon(x, y):
+    """ 
+    Calculate the Rank-Biserial Correlation (RBC) value for the paired Wilcoxon signed-rank test.
+    Parameters
+    ----------
+    x,y : array_like
+        The data from the two samples.
+    Returns
+    -------
+    rbc: float
+        The Rank-Biserial Correlation (RBC) value, which is a measure of
+        the strength and direction of the association between the two samples.
+        It ranges from -1 to 1, where:
+        - 1 indicates a perfect positive association,
+        - -1 indicates a perfect negative association,
+        - 0 indicates no association. 
+    """
+    from sklearn.preprocessing import StandardScaler
+    # format as numpy arrays
+    x, y = map(np.asarray, (x, y))
+    # test whether the two arrays are of the same length
+    if len(x) != len(y):
+        raise ValueError("Input arrays must have the same length.")
+    try:
+        # standardize
+        X = np.array([x, y]).T 
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)  # normalizes each column independently
+        x_scaled = X_scaled[:, 0]
+        y_scaled = X_scaled[:, 1] 
+        # Compute RBC
+        diff = x_scaled - y_scaled
+        non_zero = diff != 0
+        ranks = stats.rankdata(np.abs(diff[non_zero]))
+        signed_ranks = ranks * np.sign(diff[non_zero])
+        W_plus = signed_ranks[signed_ranks > 0].sum()
+        W_minus = -signed_ranks[signed_ranks < 0].sum()
+        rbc = (W_plus - W_minus) / (W_plus + W_minus)
+        return rbc
+    except:
+        return 0
+    
+
+def check_UMIconsistence_for_each_geno(count_dict,threshold=1):
+    '''
+    This function is used to count the consistence or not for each geno and each dict
+    Version1: we want to contaion those info: A:9,T:1. Both geno A and T will be counted as 1 UMI inconsistence
+    '''
+    UMI_DP=sum(count_dict.values())
+    if UMI_DP>=threshold:
+        norm_count=[count_dict[geno]/UMI_DP for geno in "ATCG"]
+        return norm_count
+    else:
+        return []
+    
+
+def handel_bam_file(bam_file,chrom,pos,ref,alt,run_type,bins,cell_dict,readLen=120,downsample=False,target_depth=2000,seed=42):
+    import random
+    from collections import defaultdict
+    import pysam
+    def fetch_and_downsample_optimized(bam_file, chrom, pos, target_depth=2000, seed=42):
+        random.seed(seed)
+        reservoir = []
+        count = 0
+        with pysam.AlignmentFile(bam_file, "rb") as in_bam:
+            for read in in_bam.fetch(chrom, pos-1, pos):
+                count += 1
+                if count <= target_depth:
+                    # 前target_depth个read，直接放入蓄水池
+                    reservoir.append(read)
+                else:
+                    # 对于第count个read（count > target_depth）
+                    # 以 target_depth / count 的概率决定是否替换蓄水池中的某个read
+                    r = random.randint(1, count)
+                    if r <= target_depth:
+                        # 替换蓄水池中第r-1个read（因为r在1到target_depth之间）
+                        reservoir[r-1] = read
+        
+        return reservoir, count
+
+    def handel_barcode_name(cell_dict,barcode_name):
+        if cell_dict!={}:
+            return cell_dict.get(barcode_name, barcode_name)
+        else:
+            return str(barcode_name)
+
+    exist_CB=[]
+    if "," in ref:
+        one_ref=ref[0]
+    else:
+        one_ref=ref
+
+    result_dict={"A":defaultdict(list), "T":defaultdict(list), "C":defaultdict(list), "G":defaultdict(list), "del":defaultdict(list)}
+    for geno in "ATCG":
+        result_dict[geno]["dp"]=0
+        result_dict[geno]["dp_consensus"]=0
+        result_dict[geno]["reverse_dp"]=0
+        result_dict[geno]["forward_dp"]=0
+        result_dict[geno]["edist"]=[0]*readLen
+        result_dict[geno]["GenoSpotNum"]=0
+
+    dp=0
+    in_bam_read=pysam.AlignmentFile(bam_file, "rb") # , reference_filename=ref_fasta)
+    pos_index = pos-1
+    barcode_name=[]
+    site_barcode_UMI_dict={}
+    
+    if downsample:
+        reads, original_depth = fetch_and_downsample_optimized(bam_file, chrom, pos, target_depth, seed)
+        # print(f"Original depth: {original_depth}, Sampled reads: {len(sampled_reads)}")
+    else:
+        reads=in_bam_read.fetch(chrom, pos-1, pos)
+
+    for read in reads:
+        
+        if run_type=="visium":
+            try:
+                CB=read.get_tag("CB").strip()
+                UB=read.get_tag("UB").strip()
+
+                barcode_name=str(CB)
+                barcode_name=handel_barcode_name(cell_dict,barcode_name)
+                UMI_name=barcode_name+"_"+str(UB)
+            except:
+                continue
+        elif run_type=="stereo":
+            try:
+                Cx_raw=int(read.get_tag("Cx"))
+                Cy_raw=int(read.get_tag("Cy"))
+                if bins !=1:
+                    Cx=round_to_nearest_bin(Cx_raw,bins)
+                    Cy=round_to_nearest_bin(Cy_raw,bins)
+                else:
+                    Cx=Cx_raw
+                    Cy=Cy_raw
+                UR=read.get_tag("UR").strip()
+
+                barcode_name=str(Cx)+"_"+str(Cy)
+                barcode_name=handel_barcode_name(cell_dict,barcode_name)
+                UMI_name=barcode_name+"_"+str(UR)
+            except:
+                continue
+
+        elif run_type=="ST":
+            try:
+                CB=str(read.get_tag("B0"))
+                UB=str(read.get_tag("B3"))
+                barcode_name=str(CB)
+                barcode_name=handel_barcode_name(cell_dict,barcode_name)
+                UMI_name=barcode_name+"_"+str(UB)
+            except:
+                continue
+
+        else:
+            # print("type",run_type)
+            continue
+
+        pos_index=pos-1
+        seq_soft_cut, ins_info, del_info, seq_hard_clip = combine_info_from_cigar(read.cigar)
+        cut_seq=handle_seq(read.seq, seq_soft_cut)
+        cut_pos=handle_pos(read.get_reference_positions(), ins_info)
+        indel_pos_list=judge_pos_in_indel(ins_info,del_info,read.get_reference_positions())
+
+        if pos_index in cut_pos or pos in indel_pos_list:
+            dp+=1
+            if pos_index in indel_pos_list:
+                geno="del"
+                result_dict[geno]["is_indel"].append(1)
+                result_dict[geno]["baseq"]=[]
+
+            else:
+                edist=cut_pos.index(pos_index)  
+                geno = cut_seq[edist]  
+                if geno not in "ATCG":
+                    continue
+                # print(geno,CB,UB)
+                epos=edist/len(cut_pos)
+                result_dict[geno]["epos"].append(epos)
+                try:
+                    result_dict[geno]["edist"][edist]+=1
+                except:
+                    print(edist)
+                result_dict["is_indel"]=[]
+                raw_index = handle_quality_matrix(cut_pos.index(pos_index),read.seq,cut_seq)
+                quality=read.get_forward_qualities()[raw_index]
+                result_dict[geno]["baseq"].append(quality)
+                # if result_dict[geno]["dp"]!=[]:
+                result_dict[geno]["dp"]+=1
+                # else:
+                #     result_dict[geno]["dp"]=0
+            # effective_DP += 1
+        
+            #number_mismatch; is_reverse; mapping_quality
+                number_mismatch=read.get_tag("nM"); result_dict[geno]["number_mismatch"].append(number_mismatch)
+                is_reverse=read.is_reverse; result_dict[geno]["is_reverse"].append(is_reverse)
+                map_q=read.mapq; result_dict[geno]["map_q"].append(map_q)
+                
+                number_mapper=read.get_tag("NH"); result_dict[geno]["number_mapper"].append(number_mapper)
+
+                #soft_clip_length and hard_clip_length
+                left_softclip=0 if seq_soft_cut[0]==None else seq_soft_cut[0]
+                right_softclip=0 if seq_soft_cut[1]==None else len(read.seq)-seq_soft_cut[1]
+                softclip_length=left_softclip+right_softclip
+                result_dict[geno]["left_softclip"].append(left_softclip)
+                result_dict[geno]["right_softclip"].append(right_softclip)
+                result_dict[geno]["softclip_length"].append(softclip_length)
+
+                left_hardclip,right_hardclip=seq_hard_clip[0],seq_hard_clip[1]
+                hardclip_length=left_hardclip+right_hardclip
+                result_dict[geno]["left_hardclip"].append(left_hardclip)
+                result_dict[geno]["right_hardclip"].append(right_hardclip)
+                result_dict[geno]["hardclip_length"].append(hardclip_length)
+
+                #indel information, indel number, indel length, indel distance
+                ins_num,ins_length,ins_distance=get_indel_info(ins_info,read.get_reference_positions().index(pos_index))
+                del_num,del_length,del_distance=get_indel_info(del_info,read.get_reference_positions().index(pos_index))
+                result_dict[geno]["ind_num"].append(ins_num+del_num)
+                result_dict[geno]["ins_num"].append(ins_num)
+                if ins_num==0:
+                    result_dict[geno]["ins_length"].append(["no"]); result_dict[geno]["ins_distance"].append(["no"])
+                else: #the ins_length and ins_distance are list format
+                    result_dict[geno]["ins_length"].append(ins_length) ## append a list
+                    result_dict[geno]["ins_distance"].append(ins_distance) ## append a list
+                
+                result_dict[geno]["del_num"].append(del_num)
+                if del_num==0:
+                    result_dict[geno]["del_length"].append(["no"]); result_dict[geno]["del_distance"].append(["no"])
+                else: # the del_length and del_distance are list format
+                    result_dict[geno]["del_length"].append(del_length)
+                    result_dict[geno]["del_distance"].append(del_distance)
+
+                # querypos(querypos_p): the distance between pos and read start (doubt: the more far away from 1st seq pos, the lower quality may have), 
+                # seqpos_p cycling length, related with strand (note: next_reference_start is only work for PE); 
+                # for visium, all reads are read2, so seqpos may same as the len(querypos)
+                # left pos: mapping position for the reference start; 
+                left_boundary=edist+left_softclip+left_hardclip
+                right_boundary=len(cut_pos)-edist + right_softclip + right_hardclip
+                result_dict[geno]["left_read_edist"].append(edist)
+                result_dict[geno]["right_read_edist"].append(len(cut_pos)-edist)
+
+                left_boundary_remove_clip=edist
+                right_boundary_remove_clip=len(cut_pos)-edist
+                result_dict[geno]["querypos"].append(left_boundary)
+                result_dict[geno]["seqpos"].append(right_boundary)
+                if is_reverse in [True,"TRUE","true","True"]:
+                    distance_to_end=right_boundary/readLen
+                    distance_to_end_value=min(right_boundary,readLen-right_boundary)
+                    result_dict[geno]["reverse_dp"]+=1
+                    distance_to_end_remove_clip=right_boundary_remove_clip/len(cut_pos)
+                    distance_to_end_remove_clip_value=min(left_boundary_remove_clip,right_boundary_remove_clip)
+                    distance_to_end_remove_clip_save=right_boundary_remove_clip
+                else:
+                    distance_to_end=left_boundary/readLen
+                    distance_to_end_value=min(left_boundary,readLen-left_boundary)
+                    result_dict[geno]["forward_dp"]+=1
+                    distance_to_end_remove_clip=left_boundary_remove_clip/len(cut_pos)
+                    distance_to_end_remove_clip_value=min(left_boundary_remove_clip,right_boundary_remove_clip)
+                    distance_to_end_remove_clip_save=left_boundary_remove_clip
+                # print(geno,distance_to_end_remove_clip)
+                result_dict[geno]["distance_to_end"].append(distance_to_end)
+                result_dict[geno]["distance_to_end_remove_clip"].append(distance_to_end_remove_clip)
+
+                leftpos_p=read.reference_start
+                rightpos_p=read.reference_end # same as leftpo, can be deleted 
+                result_dict[geno]["leftpos_p"].append(leftpos_p)
+                result_dict[geno]["rightpos_p"].append(rightpos_p)
+
+                #baseq1b
+                if pos_index+1 in cut_pos:
+                    baseq1b=read.get_forward_qualities()[raw_index+1]
+                else:
+                    baseq1b=""
+                result_dict[geno]["baseq1b"].append(baseq1b)
+                # print(read)
+                #gene information
+                try:
+                    result_dict[geno]["GeneID_list"].append(read.get_tag("GX"))
+                except:
+                    result_dict[geno]["GeneID_list"].append("no")
+                try:
+                    result_dict[geno]["GeneName_list"].append(read.get_tag("GN"))
+                except:
+                    result_dict[geno]["GeneName_list"].append("no")
+                try:
+                    #'ENST00000301072,+1576,120M;ENST00000541364,+1539,120M;ENST00000552448,+1650,120M;ENST00000639419,+923,120M')
+                    for item in read.get_tag("TX").split(";"):
+                        transcript_id,_,_=item.split(",")
+                        result_dict[geno]["TransID_list"].append(transcript_id)
+                except:
+                    result_dict[geno]["TransID_list"].append("no")
+
+                if barcode_name not in site_barcode_UMI_dict.keys():
+                    site_barcode_UMI_dict[barcode_name]=defaultdict(dict)
+
+                if UMI_name not in site_barcode_UMI_dict[barcode_name].keys():
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["count"]=defaultdict(int)
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["quality"]={"A":defaultdict(int),"T":defaultdict(int),"C":defaultdict(int),"G":defaultdict(int)}
+                    # site_barcode_UMI_dict[barcode_name][UMI_name]["context"]=[]
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end"]=[]
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip"]=[]
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end_value"]=[]
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip_value"]=[]
+
+                site_barcode_UMI_dict[barcode_name][UMI_name]["count"][geno]+=1
+                site_barcode_UMI_dict[barcode_name][UMI_name]["quality"][geno][quality]+=1
+                # site_barcode_UMI_dict[barcode_name][UMI_name]["context"].append(cut_seq[max(0,read_index-4):min(read_index+5,len(cut_seq))])
+                site_barcode_UMI_dict[barcode_name][UMI_name]["end"].append(distance_to_end)
+                site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip"].append(distance_to_end_remove_clip)
+                site_barcode_UMI_dict[barcode_name][UMI_name]["end_value"].append(distance_to_end_value)
+                site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip_value"].append(distance_to_end_remove_clip_value)
+                
+    for barcode in site_barcode_UMI_dict.keys():
+        read_have_alt=False
+        read_number_per_spot=0
+        UMI_number_per_spot=0
+        alt_UMI_number_per_spot=0
+        UMI_count_by_allele=[0,0,0,0]
+        # UMI_dp+=len(site_barcode_UMI_dict[barcode].keys())
+        for UMI in site_barcode_UMI_dict[barcode]:             
+            count_dict=site_barcode_UMI_dict[barcode][UMI]["count"]
+            quality_dict=site_barcode_UMI_dict[barcode][UMI]["quality"]
+            phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
+            candidate_allele,phred=get_most_candidate_allele(phred_dict,one_ref)
+            result_dict[candidate_allele]["dp_consensus"]+=1
+            UMI_count_by_allele["ATCG".index(candidate_allele)]+=1
+            threshold=1
+            norm_count=check_UMIconsistence_for_each_geno(count_dict,threshold)
+            norm_count_remove_single_read=check_UMIconsistence_for_each_geno(count_dict,2)
+
+            if norm_count!=[]:
+                for geno,prop in zip("ATCG",norm_count):
+                    result_dict[geno]["UMI_consistence_prop"].append(prop)
+
+            if norm_count_remove_single_read!=[]:
+                for geno,prop in zip("ATCG",norm_count_remove_single_read):
+                    result_dict[geno]["UMI_consistence_prop_remove_single_read"].append(prop)
+
+            for geno in "ATCG":
+                if site_barcode_UMI_dict[barcode][UMI]["count"][geno]!=0:
+                    # print([count_dict["A"],count_dict["T"],count_dict["C"],count_dict["G"]])
+                    result_dict[geno]["read_number_per_UMI"].append(count_dict[geno])
+                    read_number_per_spot+=site_barcode_UMI_dict[barcode][UMI]["count"][geno]
+                    result_dict[geno]["base_proportion_per_UMI"].append(count_dict[geno]/sum(count_dict.values()))
+                    
+            UMI_number_per_spot+=1
+            end=np.median(site_barcode_UMI_dict[barcode][UMI]["end"])
+            end_remove_clip=np.median(site_barcode_UMI_dict[barcode][UMI]["end_remove_clip"])
+            end_value=np.median(site_barcode_UMI_dict[barcode][UMI]["end_value"])
+            end_remove_clip_value=np.median(site_barcode_UMI_dict[barcode][UMI]["end_remove_clip_value"])
+
+            if candidate_allele==alt:
+                read_have_alt=True
+                alt_UMI_number_per_spot+=1
+
+            result_dict[candidate_allele]["per_UMI_end"].append(end)
+            result_dict[candidate_allele]["per_UMI_end_remove_clip"].append(end_remove_clip)
+            result_dict[candidate_allele]["per_UMI_end_value"].append(end_value)
+            result_dict[candidate_allele]["per_UMI_end_remove_clip_value"].append(end_remove_clip_value)
+        
+        if read_have_alt==True:
+            # print(barcode)
+            result_dict[alt]["GenoSpotNum"]+=1 
+            result_dict[alt]["total_read_number_per_spot"].append(read_number_per_spot)
+            result_dict[alt]["total_UMI_number_per_spot"].append(UMI_number_per_spot)
+            result_dict[alt]["UMI_end"].append(end)
+            result_dict[alt]["UMI_end_remove_clip"].append(end_remove_clip)
+            result_dict[alt]["UMI_end_value"].append(end_value)
+            result_dict[alt]["UMI_end_remove_clip_value"].append(end_remove_clip_value)
+            result_dict[alt]["vaf_spot"].append(alt_UMI_number_per_spot/UMI_number_per_spot)
+
+        else:
+            result_dict[one_ref]["GenoSpotNum"]+=1
+            result_dict[one_ref]["total_read_number_per_spot"].append(read_number_per_spot)
+            result_dict[one_ref]["total_UMI_number_per_spot"].append(UMI_number_per_spot)
+            result_dict[one_ref]["UMI_end"].append(end)
+            result_dict[one_ref]["UMI_end_remove_clip"].append(end_remove_clip)
+            result_dict[one_ref]["UMI_end_value"].append(end_value)
+            result_dict[one_ref]["UMI_end_remove_clip_value"].append(end_remove_clip_value)
+        
+
+        # print(end_value,end_remove_clip_value)
+        for geno,count in zip("ATCG",UMI_count_by_allele):
+            result_dict[geno]["UMI_number_per_spot"].append(count)
+
+    del in_bam_read
+    return result_dict,dp
+
+
+def barcode_cell_mapping(mapping_file):
+    import pandas as pd
+    if mapping_file == "":
+        return {}
+    
+    elif os.path.exists(mapping_file):
+        df = pd.read_csv(mapping_file, sep='\t', header=None, names=["CB", "cell"])  
+        return dict(zip(df['CB'], df['cell']))
+    else:
+        raise FileNotFoundError(f"Mapping file '{mapping_file}' does not exist")
+
+
+def handel_bam_file_downsampleUMI(bam_file,chrom,pos,ref,alt,run_type,bins,cell_dict,readLen=120,
+                downsample=False,target_depth=2000,seed=42,umi_downsample_threshold=None):
+    import random
+    from collections import defaultdict
+    import pysam
+
+    def fetch_and_downsample_optimized(bam_file, chrom, pos, target_depth=2000, targe_UMI_depth=None, seed=42):
+        random.seed(seed)
+        reservoir = []
+        count = 0
+        with pysam.AlignmentFile(bam_file, "rb") as in_bam:
+            for read in in_bam.fetch(chrom, pos-1, pos):
+                count += 1
+                if count <= target_depth:
+                    # 前target_depth个read，直接放入蓄水池
+                    reservoir.append(read)
+                else:
+                    # 对于第count个read（count > target_depth）
+                    # 以 target_depth / count 的概率决定是否替换蓄水池中的某个read
+                    r = random.randint(1, count)
+                    if r <= target_depth:
+                        # 替换蓄水池中第r-1个read（因为r在1到target_depth之间）
+                        reservoir[r-1] = read
+        
+        return reservoir, count
+
+    def downsample_UMI_reads(umi_data, threshold=None, seed=42):
+        if threshold:
+            if len(umi_data) <= threshold:
+                return umi_data
+            else:
+                random.seed(seed)
+                # 随机选择threshold个reads
+                selected_indices = random.sample(range(len(umi_data)), threshold)
+                return [umi_data[i] for i in selected_indices]
+        else:
+            return umi_data
+
+    def handel_barcode_name(cell_dict,barcode_name):
+        if cell_dict!={}:
+            return cell_dict.get(barcode_name, barcode_name)
+        else:
+            return str(barcode_name)
+
+    exist_CB=[]
+    if "," in ref:
+        one_ref=ref[0]
+    else:
+        one_ref=ref
+
+    if downsample:
+        reads, original_depth = fetch_and_downsample_optimized(bam_file, chrom, pos, target_depth, seed)
+        print(f"Original depth: {original_depth}, Sampled reads: {len(reads)}")
+    else:
+        reads = in_bam_read.fetch(chrom, pos-1, pos)
+
+    result_dict={"A":defaultdict(list), "T":defaultdict(list), "C":defaultdict(list), "G":defaultdict(list), "del":defaultdict(list)}
+    for geno in "ATCG":
+        result_dict[geno]["dp"]=0
+        result_dict[geno]["dp_consensus"]=0
+        result_dict[geno]["reverse_dp"]=0
+        result_dict[geno]["forward_dp"]=0
+        result_dict[geno]["edist"]=[0]*readLen
+        result_dict[geno]["GenoSpotNum"]=0
+
+    in_bam_read=pysam.AlignmentFile(bam_file, "rb") # , reference_filename=ref_fasta)
+    pos_index = pos-1
+    barcode_name=[]
+    site_barcode_UMI_dict={}
+    umi_reads_dict = defaultdict(list)
+    
+
+    for read in reads:
+        if run_type == "visium":
+            try:
+                CB = read.get_tag("CB").strip()
+                UB = read.get_tag("UB").strip()
+                barcode_name = str(CB)
+                barcode_name = handel_barcode_name(cell_dict, barcode_name)
+                UMI_name = barcode_name + "_" + str(UB)
+            except:
+                continue
+        elif run_type == "stereo":
+            try:
+                Cx_raw = int(read.get_tag("Cx"))
+                Cy_raw = int(read.get_tag("Cy"))
+                if bins != 1:
+                    Cx = round_to_nearest_bin(Cx_raw, bins)
+                    Cy = round_to_nearest_bin(Cy_raw, bins)
+                else:
+                    Cx = Cx_raw
+                    Cy = Cy_raw
+                UR = read.get_tag("UR").strip()
+                barcode_name = str(Cx) + "_" + str(Cy)
+                barcode_name = handel_barcode_name(cell_dict, barcode_name)
+                UMI_name = barcode_name + "_" + str(UR)
+            except:
+                continue
+        elif run_type == "ST":
+            try:
+                CB = str(read.get_tag("B0"))
+                UB = str(read.get_tag("B3"))
+                barcode_name = str(CB)
+                barcode_name = handel_barcode_name(cell_dict, barcode_name)
+                UMI_name = barcode_name + "_" + str(UB)
+            except:
+                continue
+        else:
+            continue
+        
+        pos_index = pos - 1
+        seq_soft_cut, ins_info, del_info, seq_hard_clip = combine_info_from_cigar(read.cigar)
+        cut_seq = handle_seq(read.seq, seq_soft_cut)
+        cut_pos = handle_pos(read.get_reference_positions(), ins_info)
+        indel_pos_list = judge_pos_in_indel(ins_info, del_info, read.get_reference_positions())
+
+        if pos_index in cut_pos or pos in indel_pos_list:
+            umi_key = (barcode_name, UMI_name)
+            umi_reads_dict[umi_key].append({
+                'read': read,
+                'seq_soft_cut': seq_soft_cut,
+                'ins_info': ins_info,
+                'del_info': del_info,
+                'seq_hard_clip': seq_hard_clip,
+                'cut_seq': cut_seq,
+                'cut_pos': cut_pos,
+                'indel_pos_list': indel_pos_list,
+                'pos_index': pos_index
+            })
+    dp=0
+    for umi_key, reads_data in umi_reads_dict.items():
+        barcode_name, UMI_name = umi_key
+        raw_read_len=len(reads_data)
+        if len(reads_data) >= umi_downsample_threshold:
+            reads_data = downsample_UMI_reads(reads_data, umi_downsample_threshold, seed)
+        # print("raw_reads_len:",raw_read_len)
+        # print("filter_reads_len",len(reads_data))
+        
+        for read_info in reads_data:
+            read = read_info['read']
+            seq_soft_cut = read_info['seq_soft_cut']
+            ins_info = read_info['ins_info']
+            del_info = read_info['del_info']
+            seq_hard_clip = read_info['seq_hard_clip']
+            cut_seq = read_info['cut_seq']
+            cut_pos = read_info['cut_pos']
+            indel_pos_list = read_info['indel_pos_list']
+            pos_index = read_info['pos_index']
+
+            # pos_index=pos-1
+            # seq_soft_cut, ins_info, del_info, seq_hard_clip = combine_info_from_cigar(read.cigar)
+            # cut_seq=handle_seq(read.seq, seq_soft_cut)
+            # cut_pos=handle_pos(read.get_reference_positions(), ins_info)
+            # indel_pos_list=judge_pos_in_indel(ins_info,del_info,read.get_reference_positions())
+
+            if pos_index in cut_pos or pos in indel_pos_list:
+                dp+=1
+                if pos_index in indel_pos_list:
+                    geno="del"
+                    result_dict[geno]["is_indel"].append(1)
+                    result_dict[geno]["baseq"]=[]
+
+                else:
+                    edist=cut_pos.index(pos_index)  
+                    geno = cut_seq[edist]  
+                    if geno not in "ATCG":
+                        continue
+                    # print(geno,CB,UB)
+                    epos=edist/len(cut_pos)
+                    result_dict[geno]["epos"].append(epos)
+                    try:
+                        result_dict[geno]["edist"][edist]+=1
+                    except:
+                        print(edist)
+                    result_dict["is_indel"]=[]
+                    raw_index = handle_quality_matrix(cut_pos.index(pos_index),read.seq,cut_seq)
+                    quality=read.get_forward_qualities()[raw_index]
+                    result_dict[geno]["baseq"].append(quality)
+                    # if result_dict[geno]["dp"]!=[]:
+                    result_dict[geno]["dp"]+=1
+                    # else:
+                    #     result_dict[geno]["dp"]=0
+                # effective_DP += 1
+            
+                #number_mismatch; is_reverse; mapping_quality
+                    number_mismatch=read.get_tag("nM"); result_dict[geno]["number_mismatch"].append(number_mismatch)
+                    is_reverse=read.is_reverse; result_dict[geno]["is_reverse"].append(is_reverse)
+                    map_q=read.mapq; result_dict[geno]["map_q"].append(map_q)
+                    
+                    number_mapper=read.get_tag("NH"); result_dict[geno]["number_mapper"].append(number_mapper)
+
+                    #soft_clip_length and hard_clip_length
+                    left_softclip=0 if seq_soft_cut[0]==None else seq_soft_cut[0]
+                    right_softclip=0 if seq_soft_cut[1]==None else len(read.seq)-seq_soft_cut[1]
+                    softclip_length=left_softclip+right_softclip
+                    result_dict[geno]["left_softclip"].append(left_softclip)
+                    result_dict[geno]["right_softclip"].append(right_softclip)
+                    result_dict[geno]["softclip_length"].append(softclip_length)
+
+                    left_hardclip,right_hardclip=seq_hard_clip[0],seq_hard_clip[1]
+                    hardclip_length=left_hardclip+right_hardclip
+                    result_dict[geno]["left_hardclip"].append(left_hardclip)
+                    result_dict[geno]["right_hardclip"].append(right_hardclip)
+                    result_dict[geno]["hardclip_length"].append(hardclip_length)
+
+                    #indel information, indel number, indel length, indel distance
+                    ins_num,ins_length,ins_distance=get_indel_info(ins_info,read.get_reference_positions().index(pos_index))
+                    del_num,del_length,del_distance=get_indel_info(del_info,read.get_reference_positions().index(pos_index))
+                    result_dict[geno]["ind_num"].append(ins_num+del_num)
+                    result_dict[geno]["ins_num"].append(ins_num)
+                    if ins_num==0:
+                        result_dict[geno]["ins_length"].append(["no"]); result_dict[geno]["ins_distance"].append(["no"])
+                    else: #the ins_length and ins_distance are list format
+                        result_dict[geno]["ins_length"].append(ins_length) ## append a list
+                        result_dict[geno]["ins_distance"].append(ins_distance) ## append a list
+                    
+                    result_dict[geno]["del_num"].append(del_num)
+                    if del_num==0:
+                        result_dict[geno]["del_length"].append(["no"]); result_dict[geno]["del_distance"].append(["no"])
+                    else: # the del_length and del_distance are list format
+                        result_dict[geno]["del_length"].append(del_length)
+                        result_dict[geno]["del_distance"].append(del_distance)
+
+                    # querypos(querypos_p): the distance between pos and read start (doubt: the more far away from 1st seq pos, the lower quality may have), 
+                    # seqpos_p cycling length, related with strand (note: next_reference_start is only work for PE); 
+                    # for visium, all reads are read2, so seqpos may same as the len(querypos)
+                    # left pos: mapping position for the reference start; 
+                    left_boundary=edist+left_softclip+left_hardclip
+                    right_boundary=len(cut_pos)-edist + right_softclip + right_hardclip
+                    result_dict[geno]["left_read_edist"].append(edist)
+                    result_dict[geno]["right_read_edist"].append(len(cut_pos)-edist)
+
+                    left_boundary_remove_clip=edist
+                    right_boundary_remove_clip=len(cut_pos)-edist
+                    result_dict[geno]["querypos"].append(left_boundary)
+                    result_dict[geno]["seqpos"].append(right_boundary)
+                    if is_reverse in [True,"TRUE","true","True"]:
+                        distance_to_end=right_boundary/readLen
+                        distance_to_end_value=min(right_boundary,readLen-right_boundary)
+                        result_dict[geno]["reverse_dp"]+=1
+                        distance_to_end_remove_clip=right_boundary_remove_clip/len(cut_pos)
+                        distance_to_end_remove_clip_value=min(left_boundary_remove_clip,right_boundary_remove_clip)
+                        distance_to_end_remove_clip_save=right_boundary_remove_clip
+                    else:
+                        distance_to_end=left_boundary/readLen
+                        distance_to_end_value=min(left_boundary,readLen-left_boundary)
+                        result_dict[geno]["forward_dp"]+=1
+                        distance_to_end_remove_clip=left_boundary_remove_clip/len(cut_pos)
+                        distance_to_end_remove_clip_value=min(left_boundary_remove_clip,right_boundary_remove_clip)
+                        distance_to_end_remove_clip_save=left_boundary_remove_clip
+                    # print(geno,distance_to_end_remove_clip)
+                    result_dict[geno]["distance_to_end"].append(distance_to_end)
+                    result_dict[geno]["distance_to_end_remove_clip"].append(distance_to_end_remove_clip)
+
+                    leftpos_p=read.reference_start
+                    rightpos_p=read.reference_end # same as leftpo, can be deleted 
+                    result_dict[geno]["leftpos_p"].append(leftpos_p)
+                    result_dict[geno]["rightpos_p"].append(rightpos_p)
+
+                    #baseq1b
+                    if pos_index+1 in cut_pos:
+                        baseq1b=read.get_forward_qualities()[raw_index+1]
+                    else:
+                        baseq1b=""
+                    result_dict[geno]["baseq1b"].append(baseq1b)
+                    # print(read)
+                    #gene information
+                    try:
+                        result_dict[geno]["GeneID_list"].append(read.get_tag("GX"))
+                    except:
+                        result_dict[geno]["GeneID_list"].append("no")
+                    try:
+                        result_dict[geno]["GeneName_list"].append(read.get_tag("GN"))
+                    except:
+                        result_dict[geno]["GeneName_list"].append("no")
+                    try:
+                        #'ENST00000301072,+1576,120M;ENST00000541364,+1539,120M;ENST00000552448,+1650,120M;ENST00000639419,+923,120M')
+                        for item in read.get_tag("TX").split(";"):
+                            transcript_id,_,_=item.split(",")
+                            result_dict[geno]["TransID_list"].append(transcript_id)
+                    except:
+                        result_dict[geno]["TransID_list"].append("no")
+
+                    if barcode_name not in site_barcode_UMI_dict.keys():
+                        site_barcode_UMI_dict[barcode_name]=defaultdict(dict)
+
+                    if UMI_name not in site_barcode_UMI_dict[barcode_name].keys():
+                        site_barcode_UMI_dict[barcode_name][UMI_name]["count"]=defaultdict(int)
+                        site_barcode_UMI_dict[barcode_name][UMI_name]["quality"]={"A":defaultdict(int),"T":defaultdict(int),"C":defaultdict(int),"G":defaultdict(int)}
+                        # site_barcode_UMI_dict[barcode_name][UMI_name]["context"]=[]
+                        site_barcode_UMI_dict[barcode_name][UMI_name]["end"]=[]
+                        site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip"]=[]
+                        site_barcode_UMI_dict[barcode_name][UMI_name]["end_value"]=[]
+                        site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip_value"]=[]
+
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["count"][geno]+=1
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["quality"][geno][quality]+=1
+                    # site_barcode_UMI_dict[barcode_name][UMI_name]["context"].append(cut_seq[max(0,read_index-4):min(read_index+5,len(cut_seq))])
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end"].append(distance_to_end)
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip"].append(distance_to_end_remove_clip)
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end_value"].append(distance_to_end_value)
+                    site_barcode_UMI_dict[barcode_name][UMI_name]["end_remove_clip_value"].append(distance_to_end_remove_clip_value)
+                    
+    for barcode in site_barcode_UMI_dict.keys():
+        read_have_alt=False
+        read_number_per_spot=0
+        UMI_number_per_spot=0
+        alt_UMI_number_per_spot=0
+        UMI_count_by_allele=[0,0,0,0]
+
+        end_list=[]
+        end_remove_clip_list=[]
+        end_value_list=[]
+        end_remove_clip_value_list=[]
+        # UMI_dp+=len(site_barcode_UMI_dict[barcode].keys())
+        for UMI in site_barcode_UMI_dict[barcode]:             
+            count_dict=site_barcode_UMI_dict[barcode][UMI]["count"]
+            quality_dict=site_barcode_UMI_dict[barcode][UMI]["quality"]
+            phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
+            candidate_allele,phred=get_most_candidate_allele(phred_dict,one_ref)
+            result_dict[candidate_allele]["dp_consensus"]+=1
+            UMI_count_by_allele["ATCG".index(candidate_allele)]+=1
+            threshold=1
+            norm_count=check_UMIconsistence_for_each_geno(count_dict,threshold)
+            norm_count_remove_single_read=check_UMIconsistence_for_each_geno(count_dict,2)
+
+            if norm_count!=[]:
+                for geno,prop in zip("ATCG",norm_count):
+                    result_dict[geno]["UMI_consistence_prop"].append(prop)
+
+            if norm_count_remove_single_read!=[]:
+                for geno,prop in zip("ATCG",norm_count_remove_single_read):
+                    result_dict[geno]["UMI_consistence_prop_remove_single_read"].append(prop)
+
+            for geno in "ATCG":
+                if site_barcode_UMI_dict[barcode][UMI]["count"][geno]!=0:
+                    # print([count_dict["A"],count_dict["T"],count_dict["C"],count_dict["G"]])
+                    result_dict[geno]["read_number_per_UMI"].append(count_dict[geno])
+                    read_number_per_spot+=site_barcode_UMI_dict[barcode][UMI]["count"][geno]
+                    
+            UMI_number_per_spot+=1
+            end=np.median(site_barcode_UMI_dict[barcode][UMI]["end"])
+            end_remove_clip=np.median(site_barcode_UMI_dict[barcode][UMI]["end_remove_clip"])
+            end_value=np.median(site_barcode_UMI_dict[barcode][UMI]["end_value"])
+            end_remove_clip_value=np.median(site_barcode_UMI_dict[barcode][UMI]["end_remove_clip_value"])
+
+            end_list+=[end]
+            end_remove_clip_list+=[end_remove_clip]
+            end_value_list+=[end_value]
+            end_remove_clip_value_list+=[end_remove_clip_value]
+            
+            if candidate_allele==alt:
+                read_have_alt=True
+                alt_UMI_number_per_spot+=1
+
+            result_dict[candidate_allele]["per_UMI_end"].append(end)
+            result_dict[candidate_allele]["per_UMI_end_remove_clip"].append(end_remove_clip)
+            result_dict[candidate_allele]["per_UMI_end_value"].append(end_value)
+            result_dict[candidate_allele]["per_UMI_end_remove_clip_value"].append(end_remove_clip_value)
+        
+        if read_have_alt==True:
+            # print(barcode)
+            result_dict[alt]["GenoSpotNum"]+=1 
+            result_dict[alt]["total_read_number_per_spot"].append(read_number_per_spot)
+            result_dict[alt]["total_UMI_number_per_spot"].append(UMI_number_per_spot)
+            result_dict[alt]["UMI_end"]+=end_list
+            result_dict[alt]["UMI_end_remove_clip"]+=end_remove_clip_list
+            result_dict[alt]["UMI_end_value"]+=end_value_list
+            result_dict[alt]["UMI_end_remove_clip_value"]+=end_remove_clip_value_list
+            result_dict[alt]["vaf_spot"].append(alt_UMI_number_per_spot/UMI_number_per_spot)
+
+        else:
+            result_dict[one_ref]["GenoSpotNum"]+=1
+            result_dict[one_ref]["total_read_number_per_spot"].append(read_number_per_spot)
+            result_dict[one_ref]["total_UMI_number_per_spot"].append(UMI_number_per_spot)
+            result_dict[one_ref]["UMI_end"]+=end_list
+            result_dict[one_ref]["UMI_end_remove_clip"]+=end_remove_clip_list
+            result_dict[one_ref]["UMI_end_value"]+=end_value_list
+            result_dict[one_ref]["UMI_end_remove_clip_value"]+=end_remove_clip_value_list
+        
+
+        # print(end_value,end_remove_clip_value)
+        for geno,count in zip("ATCG",UMI_count_by_allele):
+            result_dict[geno]["UMI_number_per_spot"].append(count)
+
+    del in_bam_read
+    return result_dict,dp
+
+
+def calculate_UMI_combine_phred(count_dict, quality_dict,weigh=0.5):
+    all_genos=["A","T","C","G"]
+    pcr_error = 1e-6
+    #no_pcr_error = 1.0 - 3e-5 the reference from smcount
+    no_pcr_error = (1.0 - pcr_error) ** 100 # median cycle in RNA-seqing is 100 (50-150)
+    rightP = 1.0
+    sumP = 0.0
+    dp=sum(count_dict.values())
+    proP_dict=defaultdict(lambda : 1.0)
+    pcrP_dict=defaultdict(float)
+    likelihood_dict=defaultdict(float)
+    phred_dict=defaultdict(float)
+    for geno in count_dict.keys():
+        ## proP_value means no sequencing error for each geno
+        # the likelihood whose allele equal to geno, here the quality is the right prob for one base
+        qual_geno_list=[phred_2_q(key)**int(quality_dict[geno][key]) for key in quality_dict[geno].keys()]
+        qual_geno=reduce(lambda x, y: x*y, qual_geno_list)
+        proP_dict[geno]*=qual_geno
+        # the likelihood whose allele not equal to geno
+        for other_geno in quality_dict.keys()-set([geno]):
+            other_qual_geno_list = [(1-phred_2_q(key))**int(quality_dict[other_geno][key]) for key in quality_dict[other_geno].keys()]
+            if other_qual_geno_list == []:
+                continue
+            other_qual_geno=reduce(lambda x, y: x*y, other_qual_geno_list)
+            proP_dict[geno]*=other_qual_geno
+        
+        ## rightP means no sequencing error, or no base calling error for all base
+        rightP = rightP * qual_geno
+    
+    for geno in all_genos:
+        ## pcrP means PCR error
+        count_geno = 0 if geno not in count_dict.keys() else count_dict[geno]
+        ratio = ( count_geno + 0.5) / (dp + 0.5 * 4)
+        pcrP = 10.0 ** (-6.0 * ratio)
+        pcrP_dict[geno]=pcrP
+    
+    # after obtaining [sequencing_error, no_pcr_error, no_sequencing_error, pcr_error], the likelihood of each geno will be calculate
+    for geno in all_genos:
+        if geno in count_dict.keys():
+            base_calling_error = proP_dict[geno]
+            no_base_calling_error=rightP
+            pcr_error=min([pcrP_dict[char] for char in pcrP_dict.keys() if char != geno])
+            likelihood_value = weigh * no_pcr_error * base_calling_error + (1-weigh) * no_base_calling_error * pcr_error 
+        else:
+            likelihood_value = rightP
+            for char in set(all_genos) - set([geno]):
+                likelihood_value *= pcrP_dict[char]
+                    
+        likelihood_dict[geno]=likelihood_value
+        sumP += likelihood_value
+    
+    for geno in likelihood_dict.keys():
+        phred_dict[geno] = 0 if sumP <= 0 else q_2_phred(likelihood_dict[geno] / sumP)
+
+    return phred_dict
+
+
+# following the last function, to get the most candidate allele and it's phred
+def get_most_candidate_allele(phred_dict,ref_allele):
+    rank_list=sorted(phred_dict.items(), key = lambda item:item[1], reverse=True)
+    major_allele=rank_list[0][0]; major_allele_phred=rank_list[0][1]
+    # major_allele_count=count_dict[major_allele]
+
+    # ref_allele_count=count_dict[ref_allele]
+    ref_allele_phred=phred_dict[ref_allele]
+
+    if  major_allele != ref_allele and ref_allele_phred>=major_allele_phred:
+        candidate_allele=ref_allele;phred=ref_allele_phred
+    else:
+        candidate_allele=major_allele;phred=major_allele_phred
+
+    return candidate_allele,phred
 

@@ -4,16 +4,19 @@ readLen: 120
 spacerangerResult: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result"  #absolute path
 srcPath: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/"
 GENOME_FA: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa"
-gff3_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gencode.v44.annotation.exon.sort.gff3"
+gff3_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/wgEncodeGencodeExonSupportV44.sort.bed"
 mappbablity_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/k24.umap.bedgraph"
 prior_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/demo.prior.out" # use your personal prior file
-gnomad_list: "/storage/douyanmeiLab/yangzhirui/01.Data_download/07.brain/04.Analysis/04.mutations/annovar_info.txt" # if prior_file is provided, gnomad_list is not required
-savePATH: "demo_output/"
+error_profile: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/lysis_errors.SigProfile.txt"
+gnomad_list: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gnomad_from_annovar_list.txt" # if prior_file is provided, gnomad_list is not required
+savePATH: "output/"
 SPECIES: "human"
 gender: "male"  
 gtexGene: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gtexGene.txt"
-lysis_error_SigProfile: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/skin_CSCC.lysis_errors_sites.SigProfile.txt"
-PCR_errors_SigProfile: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/skin_CSCC.PCR_errors_sites.SigProfile.txt"
-bkg: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/skin_CSCC.bkg.txt"
+reference_error_SigProfile: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/split_3_lysis_errors.SigProfile.txt"
 cluster: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/demo_cluster.txt" ## you can provide personal cluster result. If not, we would run cluster automaticly
 h5ad_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/demo_results.h5ad" ## you can provide personal cluster result. If not, we would run cluster automaticly
+PON_file: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/PON_33samples.txt"
+dbSNP: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/Homo_sapiens_assembly38.dbsnp138.vcf"
+RNA_editing_path: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/RNA_editing.bed"
+imprinted_genes_bed: "/storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/imprinted_genes.region.bed"

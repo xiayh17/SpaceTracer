@@ -16,30 +16,29 @@ from module.read_file import handle_barcode, handle_spot_geno_to_get_mutation_li
 import pandas as pd
 from module.spatial_features import handle_per_line, parallel_merge_and_save
 import numpy as np
-from utils import check_dir, check_input, check_output, str2bool
+from utils import barcode_cell_mapping, check_dir, check_input, check_output, str2bool
 from tqdm import tqdm
 
 
 def main():
     check_dir(args.outdir)
-    check_input([args.ind_genotype,args.spot_genotype,args.fasta,args.germline,args.artifact_signature1])
+    check_input([args.ind_genotype,args.spot_genotype,args.fasta,args.germline,args.artifact_signature])
     in_name=args.outprefix
     indgenotype_file=args.ind_genotype
     spotgenotype_file=args.spot_genotype
     germline_file=args.germline
     ref_fasta=args.fasta
     filter_bam=args.filter_bam
-    bkg=args.bkg
+    raw_bam=args.raw_bam
     thread=int(args.thread)
-    artifact_signature1=args.artifact_signature1
-    artifact_signature2=args.artifact_signature2
+    artifact_signature=args.artifact_signature
 
     barcode_dir=os.path.join(args.outdir,"barcode_dir");check_dir(barcode_dir)
     spatial_feature_file=os.path.join(args.outdir,in_name+".spatial_feature.txt")
-    phase_beforeUMIcombination_file=os.path.join(args.outdir,in_name+".phase_beforeUMIcombination.txt")
+    # phase_beforeUMIcombination_file=os.path.join(args.outdir,in_name+".phase_beforeUMIcombination.txt")
     phase_afterUMIcombination_file=os.path.join(args.outdir,in_name+".phase_afterUMIcombination.txt")
     feature_file=os.path.join(args.outdir,in_name+".features.txt")
-    add_hFR_feature=os.path.join(args.outdir,in_name+".features.add_hFDR.txt")
+    add_hFR_feature=os.path.join(args.outdir,"all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt")
     
     def get_spatial_test_result():
         mutation_identifier_list=handle_spot_geno_to_get_mutation_list(indgenotype_file)
@@ -145,7 +144,7 @@ def main():
         else:
             gender="female"
 
-        partial_func=partial(phase_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, filter_bam,args.flanking,args.minprior,gender,gene_name_index,args.CBtag,args.UBtag)
+        partial_func=partial(phase_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, filter_bam,args.flanking,args.minprior,gender,gene_name_index,args.run_type,args.bins)
         short_gene_review=open(short_gencode_file_name,"r")
         lines=short_gene_review.readlines()
 
@@ -165,43 +164,43 @@ def main():
         out_file.close()
         shutil.rmtree(tmp_dir)  
 
-    def phase_no_combine():
-        tmp_dir=os.path.join(str(args.outdir),"tmp_phase_no_combine")
-        check_dir(tmp_dir)
+    # def phase_no_combine():
+    #     tmp_dir=os.path.join(str(args.outdir),"tmp_phase_no_combine")
+    #     check_dir(tmp_dir)
 
-        germ_site_bed_file=handel_candidate_informative_SNP_site(args.species,args.germline, tmp_dir)
-        short_ind_file, combine_ind_germ_file=short_mosaic_sites_and_combine_with_germ(args.ind_genotype, germ_site_bed_file, tmp_dir)
-        if args.gtexGene:
-            short_gencode_file_name=short_bed_file(args.gtexGene, short_ind_file, tmp_dir)
-            gene_name_index=3
-        if args.gencode:
-            short_gencode_file_name=short_gencode_file(args.gencode,short_ind_file,tmp_dir,rerun=True)
-            gene_name_index=4
+    #     germ_site_bed_file=handel_candidate_informative_SNP_site(args.species,args.germline, tmp_dir)
+    #     short_ind_file, combine_ind_germ_file=short_mosaic_sites_and_combine_with_germ(args.ind_genotype, germ_site_bed_file, tmp_dir)
+    #     if args.gtexGene:
+    #         short_gencode_file_name=short_bed_file(args.gtexGene, short_ind_file, tmp_dir)
+    #         gene_name_index=3
+    #     if args.gencode:
+    #         short_gencode_file_name=short_gencode_file(args.gencode,short_ind_file,tmp_dir,rerun=True)
+    #         gene_name_index=4
 
-        if args.gender in ["M","male"]:
-            gender="male"
-        else:
-            gender="female"
+    #     if args.gender in ["M","male"]:
+    #         gender="male"
+    #     else:
+    #         gender="female"
 
-        partial_func=partial(phase_no_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, filter_bam,args.flanking,args.minprior,gender,gene_name_index)
-        short_gene_review=open(short_gencode_file_name,"r")
-        lines=short_gene_review.readlines()
+    #     partial_func=partial(phase_no_combine_get_candidate_germline,ref_fasta,combine_ind_germ_file, filter_bam,args.flanking,args.minprior,gender,gene_name_index)
+    #     short_gene_review=open(short_gencode_file_name,"r")
+    #     lines=short_gene_review.readlines()
 
-        with multiprocessing.Pool(thread) as pool:
-            results=pool.map(partial_func,lines,chunksize=1) # type: ignore # per result is [[site_info]]
+    #     with multiprocessing.Pool(thread) as pool:
+    #         results=pool.map(partial_func,lines,chunksize=1) # type: ignore # per result is [[site_info]]
 
 
-        out_file=open(phase_beforeUMIcombination_file,"w")
-        res=[]
-        for lists in results:
-            if lists not in res:
-                res.append(lists)
-                for line in lists:
-                    out_text="\t".join([str(i) for i in line])
-                    out_file.write(f'{out_text}\n')
+    #     out_file=open(phase_beforeUMIcombination_file,"w")
+    #     res=[]
+    #     for lists in results:
+    #         if lists not in res:
+    #             res.append(lists)
+    #             for line in lists:
+    #                 out_text="\t".join([str(i) for i in line])
+    #                 out_file.write(f'{out_text}\n')
             
-        out_file.close()
-        shutil.rmtree(tmp_dir)  
+    #     out_file.close()
+    #     shutil.rmtree(tmp_dir)  
 
     def extract_feature():
         tmp_name=str(uuid.uuid4())
@@ -210,18 +209,36 @@ def main():
         current_directory = os.path.dirname(os.path.abspath(__file__))
         compare_pl_path=os.path.join(current_directory,"others/compare_files.pl")
 
+        gene_count_file=""
         gff3_file=args.gff3_file
+        knownGene_file=""
+        combine_phase_file=phase_afterUMIcombination_file
+        no_combine_phase_file=""
+        # annovar_annotaion_file=args.annovar_annotaion_file
         annovar_annotaion_file=""
+        thread=int(args.thread)
 
-        CBtag=args.CBtag
-        UBtag=args.UBtag
-        bam_file=args.raw_bam
+        reference_fasta=args.fasta
+        run_type=args.run_type
+        bins=args.bins
+        bam_file=raw_bam
         ind_count_file=args.ind_count_file
         ind_geno_file=args.ind_genotype
         h5ad_path=args.h5ad
         empty_df,adata=handle_h5ad_file(h5ad_path)
-
-        intersect_file=spatial_feature_file
+       
+        vaf_cluster_file=args.vaf_cluster_file
+        sample=args.outprefix
+        cell_info=args.cell_info
+        if cell_info :
+            cell_dict=barcode_cell_mapping(cell_info)
+        else:
+            cell_dict={}
+        
+        downsample=args.downsample
+        targe_dp=args.downsample_dp
+        # umi_downsample_dp=args.umi_downsample_dp
+        seed=args.seed
         file=open(spatial_feature_file,"r")
         lines=[]
         for line in file:
@@ -231,8 +248,8 @@ def main():
             raise ValueError(f'No mosaic sites were caught!')
         
         sep="\t";grep_sf_info=1
-            
-        tmp_mutation_bed=get_mutation_bed_file(tmpdir,intersect_file,sep)
+        mode="normal"
+        tmp_mutation_bed=get_mutation_bed_file(tmpdir,spatial_feature_file,sep)
 
         mappbablity_file=args.mappbablity_file
         used_tmp_mappbablity_file=handle_mappbablity_file(tmpdir,mappbablity_file,tmp_mutation_bed)
@@ -240,23 +257,27 @@ def main():
         vaf_cluster_file=args.vaf_cluster_file
         readLen=args.readLen
         prior=args.prior
+        total_gene_count=""
   
         partial_func=partial(extract_feature_perline,
-                            in_name,
-                            CBtag,
-                            UBtag,  
+                            sample,
+                            run_type,
+                            bins,
                             tmpdir,
-                            "normal",
+                            mode,
                             compare_pl_path,
-                            ref_fasta,
+                            reference_fasta,
                             grep_sf_info,
                             spatial_feature_file,
                             bam_file,
                             ind_count_file,
                             ind_geno_file,
+                            gene_count_file,
                             gff3_file,
-                            phase_afterUMIcombination_file,
-                            phase_beforeUMIcombination_file,
+                            knownGene_file,
+                            total_gene_count,
+                            combine_phase_file,
+                            no_combine_phase_file,
                             empty_df,
                             adata,
                             used_tmp_mappbablity_file,
@@ -264,7 +285,12 @@ def main():
                             vaf_cluster_file,
                             readLen,
                             barcode_dir,
-                            prior
+                            prior,
+                            cell_dict,
+                            downsample,
+                            targe_dp,
+                            seed
+                            # umi_downsample_dp
                             )
     
     
@@ -275,7 +301,7 @@ def main():
         outfile=open(feature_file,"w")
         header=""
 
-        for mutation_dict in results: 
+        for _,mutation_dict in results: 
             if mutation_dict is not None and mutation_dict!={}:
                 if header!="" or mutation_dict=={}:
                     pass
@@ -293,11 +319,11 @@ def main():
 
     
     def add_hFDR():
-        if os.path.exists(artifact_signature1):
+        if os.path.exists(artifact_signature):
             current_directory = os.path.dirname(os.path.abspath(__file__))
             script_path=os.path.join(current_directory,"others/statistic_by_mutation_signature.R")
             
-            command=f"Rscript {script_path} {feature_file} {args.outdir} {bkg} {artifact_signature1} {artifact_signature2}"
+            command=f"Rscript {script_path} {args.outprefix} {feature_file} {args.outdir} {args.artifact_signature} {args.reference_error_profile}"
             result=subprocess.run(command,shell=True,check=True)
 
 
@@ -305,25 +331,17 @@ def main():
     if args.rerun:
         # get_spatial_test_result()
         phase_combine()
-        phase_no_combine()
         extract_feature()
         add_hFDR()
 
     elif not check_output(spatial_feature_file):
         get_spatial_test_result()
         phase_combine()
-        phase_no_combine()
         extract_feature()
         add_hFDR()
 
     elif not check_output(phase_afterUMIcombination_file):
         phase_combine()
-        phase_no_combine()
-        extract_feature()
-        add_hFDR()
-
-    elif not check_output(phase_beforeUMIcombination_file):
-        phase_no_combine()
         extract_feature()
         add_hFDR()
 
@@ -369,9 +387,8 @@ parser.add_argument("--ind_count_file",required=False,default="", help="ind_coun
 parser.add_argument("--mappbablity_file",required=False,default="", help="mappbablity_file")
 parser.add_argument("--gff3_file",required=False,default="", help="gff3_file")
 parser.add_argument("--vaf_cluster_file",required=False,default="", help="vaf_cluster_file")
-parser.add_argument("--artifact_signature1",required=False,default="", help="artifact_signature1")
-parser.add_argument("--artifact_signature2",required=False,default="", help="artifact_signature2")
-parser.add_argument("--bkg",required=False,default="", help="background vaf list file")
+parser.add_argument("--artifact_signature",required=False,default="", help="artifact_signature")
+parser.add_argument("--reference_error_profile",required=False,default="", help="the reference error profile (we provided)")
 
 
 #choice one
@@ -379,9 +396,13 @@ parser.add_argument("--gtexGene",required=False, help="gene bed file downloaded 
 parser.add_argument("--gencode",required=False, help="gtf file downloaded from gencode")
 
 # optional
+parser.add_argument("--downsample", required=False, default=False, action="store_true", help="downsample or not (defalut: False)")
+parser.add_argument("--downsample_dp", required=False, type=int, default=2000, help="if downsample, the max dp allowed (default: 2000)")
+parser.add_argument("--seed", required=False, type=int, default=42,help="ramdom seed (default: 42)")
 parser.add_argument("--rerun", required=False, action="store_true", help="If set, forces the program to rerun even if the output already exists.")
-parser.add_argument("--CBtag",required=False,default="CB", help="CBtag, other expression of platform")
-parser.add_argument("--UBtag",required=False,default="UB", help="UBtag")
+parser.add_argument("--type", dest='run_type',default="visium",choices=["visium","stereo","ST","HD"],type=str, required=False, help="Your input sequence type")
+parser.add_argument("--cell_info",default="",type=str, required=False, help="If you want to extract the features by cell level, please offer the relationship between barcode and cells")
+parser.add_argument("--bins", required=False,default=100,type=int, help="only work for stereo-seq, if you want to combine the UMI in a bin level")
 parser.add_argument("--flanking",required=False,type=int,default=120, help="read length or the flanking length")
 parser.add_argument("--minprior",required=False,type=float,default=0.01, help="the min prior for filtering informative SNP")
 parser.add_argument("--alpha", required=False, default=0.05, type=float, help="the significance level for the tests (default=0.05)")

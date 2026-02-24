@@ -3,6 +3,11 @@ code.txt
 module/__pycache__
 others/__pycache__
 __pycache__
-Resources
-demo_output/*
+all_Resources
+demo_output
+output
 for_code_ocean.txt
+demo_input/Resource
+config.txt
+old_demo_output
+run_snakemake_for_conda_old

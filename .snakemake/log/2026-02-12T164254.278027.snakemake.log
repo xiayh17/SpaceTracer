@@ -1,0 +1,40 @@
+Config file config.txt is extended by additional config specified via the command line.
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 2
+Rules claiming more threads will be scaled down.
+Job stats:
+job             count
+------------  -------
+all                 1
+filter              1
+get_features        1
+pred                1
+total               4
+
+Select jobs to execute...
+
+[Thu Feb 12 16:42:55 2026]
+rule get_features:
+    input: /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa, demo/bam_filter/IN.bam, demo/bam_filter/IN_filter.bam, demo/cluster_info/result/demo_results.h5ad, demo/counts_files/demo.spot.count.out, demo/counts_files/demo.cluster_filter.count.out, demo/counts_files/demo.ind_filter.count.out, demo/cluster_info/result/demo_cluster.txt, demo/demo.prior.out, demo/geno_files/demo.ind_genotype_filter.out, demo/geno_files/demo.germ_genotype.out, demo/geno_files/demo.cluster_vaf.out, demo/geno_files/demo.spot_genotype.out, demo/error/demo.lysis_profile.txt
+    output: demo/features_dir/demo.spatial_feature.txt, demo/features_dir/demo.phase_afterUMIcombination.txt, demo/features_dir/demo.features.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    jobid: 3
+    reason: Missing output files: demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Thu Feb 12 16:42:57 2026]
+Error in rule get_features:
+    jobid: 3
+    input: /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa, demo/bam_filter/IN.bam, demo/bam_filter/IN_filter.bam, demo/cluster_info/result/demo_results.h5ad, demo/counts_files/demo.spot.count.out, demo/counts_files/demo.cluster_filter.count.out, demo/counts_files/demo.ind_filter.count.out, demo/cluster_info/result/demo_cluster.txt, demo/demo.prior.out, demo/geno_files/demo.ind_genotype_filter.out, demo/geno_files/demo.germ_genotype.out, demo/geno_files/demo.cluster_vaf.out, demo/geno_files/demo.spot_genotype.out, demo/error/demo.lysis_profile.txt
+    output: demo/features_dir/demo.spatial_feature.txt, demo/features_dir/demo.phase_afterUMIcombination.txt, demo/features_dir/demo.features.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    shell:
+        
+        python /storage/douyanmeiLab/yangzhirui/SpaceTracer//3_run_get_features.py             --fasta /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa             --raw_bam demo/bam_filter/IN.bam             --type visium             --filter_bam demo/bam_filter/IN_filter.bam             --gender male             --outdir demo/features_dir             --outprefix demo             --thread 1             --germline demo/geno_files/demo.germ_genotype.out             --ind_genotype demo/geno_files/demo.ind_genotype_filter.out             --spot_genotype demo/geno_files/demo.spot_genotype.out             --readLen 120             --prior demo/demo.prior.out             --h5ad demo/cluster_info/result/demo_results.h5ad              --spaceranger_result_dir /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs             --ind_count_file demo/counts_files/demo.ind_filter.count.out             --mappbablity_file /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/k24.umap.bedgraph             --gff3_file /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gencode.v44.annotation.exon.sort.gff3             --vaf_cluster_file demo/geno_files/demo.cluster_vaf.out             --gtexGene /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gtexGene.txt             --artifact_signature demo/error/demo.lysis_profile.txt             --reference_error_profile /storage/douyanmeiLab/yangzhirui/01.Data_download/Mutation_signatures_new_creteria/use_not_validated_low_freq_001_251021/lysis_Signatures_split3.Sigprofile.txt             --barcodes /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv
+
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: ../.snakemake/log/2026-02-12T164254.278027.snakemake.log

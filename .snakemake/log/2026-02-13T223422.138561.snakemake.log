@@ -1,0 +1,72 @@
+Config file config.txt is extended by additional config specified via the command line.
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 2
+Rules claiming more threads will be scaled down.
+Job stats:
+job             count
+------------  -------
+all                 1
+filter              1
+get_features        1
+pred                1
+total               4
+
+Select jobs to execute...
+
+[Fri Feb 13 22:34:25 2026]
+rule get_features:
+    input: /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa, demo/bam_filter/IN.bam, demo/bam_filter/IN_filter.bam, demo/cluster_info/result/demo_results.h5ad, demo/counts_files/demo.spot.count.out, demo/counts_files/demo.cluster_filter.count.out, demo/counts_files/demo.ind_filter.count.out, demo/cluster_info/result/demo_cluster.txt, demo/demo.prior.out, demo/geno_files/demo.ind_genotype_filter.out, demo/geno_files/demo.germ_genotype.out, demo/geno_files/demo.cluster_vaf.out, demo/geno_files/demo.spot_genotype.out, demo/error/demo.lysis_profile.txt
+    output: demo/features_dir/demo.spatial_feature.txt, demo/features_dir/demo.phase_afterUMIcombination.txt, demo/features_dir/demo.features.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    jobid: 3
+    reason: Updated input files: demo/cluster_info/result/demo_results.h5ad
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Fri Feb 13 22:44:52 2026]
+Finished job 3.
+1 of 4 steps (25%) done
+Select jobs to execute...
+
+[Fri Feb 13 22:44:52 2026]
+rule pred:
+    input: demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    output: demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt, demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt
+    jobid: 2
+    reason: Missing output files: demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt; Input files updated by another job: demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Fri Feb 13 22:45:01 2026]
+Finished job 2.
+2 of 4 steps (50%) done
+Select jobs to execute...
+
+[Fri Feb 13 22:45:01 2026]
+rule filter:
+    input: demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt, demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt, demo/geno_files/demo.germ_genotype.out
+    output: demo/pred.FINAL.sf_preseverd.txt, demo/pred.FINAL.sf_free.txt
+    jobid: 1
+    reason: Missing output files: demo/pred.FINAL.sf_preseverd.txt, demo/pred.FINAL.sf_free.txt; Input files updated by another job: demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt, demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Fri Feb 13 22:45:01 2026]
+Error in rule filter:
+    jobid: 1
+    input: demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt, demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt, demo/geno_files/demo.germ_genotype.out
+    output: demo/pred.FINAL.sf_preseverd.txt, demo/pred.FINAL.sf_free.txt
+    shell:
+        
+        bash /storage/douyanmeiLab/yangzhirui/SpaceTracer//others/5_remove_recurrent_mutations.sh                 /storage/douyanmeiLab/yangzhirui/SpaceTracer/                 demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt                 demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt                 demo/predict_spatial_feature_preserved                 demo/geno_files/demo.germ_genotype.out                 /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa                 /storage/douyanmeiLab/yangzhirui/Reference/COMBINED_RADAR_REDIprotal_DARNED_hg38_all_sites.bed                 /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gtexGene.txt                 /storage/douyanmeiLab/yangzhirui/Reference/dbSNP/Homo_sapiens_assembly38.dbsnp138.vcf                 /storage/douyanmeiLab/yangzhirui/Reference/Cellranger/refdata-gex-GRCh38-2020-A/imprinted_genes.region.bed                 /storage/douyanmeiLab/yangzhirui/01.Data_download/PON/PON_new_model_250921_33samples.txt 
+        
+        bash /storage/douyanmeiLab/yangzhirui/SpaceTracer//others/5_remove_recurrent_mutations.sh                 /storage/douyanmeiLab/yangzhirui/SpaceTracer/                 demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt                 demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt                 demo/predict_spatial_feature_free                 demo/geno_files/demo.germ_genotype.out                 /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa                 /storage/douyanmeiLab/yangzhirui/Reference/COMBINED_RADAR_REDIprotal_DARNED_hg38_all_sites.bed                 /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/gtexGene.txt                 /storage/douyanmeiLab/yangzhirui/Reference/dbSNP/Homo_sapiens_assembly38.dbsnp138.vcf                 /storage/douyanmeiLab/yangzhirui/Reference/Cellranger/refdata-gex-GRCh38-2020-A/imprinted_genes.region.bed                 /storage/douyanmeiLab/yangzhirui/01.Data_download/PON/PON_new_model_250921_33samples.txt         
+
+        cp demo/predict_spatial_feature_preserved/pred.FINAL.txt demo/pred.FINAL.sf_preseverd.txt
+        cp demo/predict_spatial_feature_free/pred.FINAL.txt demo/pred.FINAL.sf_free.txt
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: ../.snakemake/log/2026-02-13T223422.138561.snakemake.log

@@ -119,19 +119,23 @@ def individual_posterior(ref, alt, qA, qT, qC, qG, fA, fT, fC, fG, mu=1e-7, thr_
         alt_count = count_dict[alt]
         qalt_dict = q_dicts[alt]
         l_germline = genotype_likelihood(ref_count, alt_count, qref_dict, qalt_dict)
-        l_germline = l_germline[:-1]
+        l_germline = l_germline
         # prior
         prior_refhom = f[ref]**2
-        prior_het = f[ref]*f[alt]
+        prior_het = 2*f[ref]*f[alt]
         prior_althom = f[alt]**2
-        prior = np.array([prior_refhom, prior_althom, prior_het])
+        prior_mosaic = mu  # prior for mosaic
+        prior = np.array([prior_refhom, prior_althom, prior_het, prior_mosaic])
         p_germline = prior * l_germline
         
         p_germline = p_germline/sum(p_germline)
         # find the highest genotype
-        germline_genotype_list = ["refhom", "althom", "het"]
+        germline_genotype_list = ["refhom", "althom", "het", "mosaic"]
         germline_dict = dict(zip(germline_genotype_list, p_germline))
         germline_geno = max(germline_dict, key= lambda x: germline_dict[x])
+        # if the genotype for the most two alleles is mosaic, then the germline genotype is refhom
+        if germline_geno == "mosaic":
+            germline_geno = "refhom"
 
         # ======================================================
         # Find the germline alleles
@@ -184,7 +188,7 @@ def individual_posterior(ref, alt, qA, qT, qC, qG, fA, fT, fC, fG, mu=1e-7, thr_
         for ref in ref_list:
             # prior
             prior_refhom = f[ref]**2
-            prior_het = f[ref]*f[alt]
+            prior_het = 2*f[ref]*f[alt]
             # likelihood
             ref_count = count_dict[ref]
             qref_dict = q_dicts[ref]

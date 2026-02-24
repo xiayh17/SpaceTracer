@@ -146,9 +146,7 @@ Ensure the `config.txt` file is correctly set up with the required input paths a
 | `SPECIES` | Sample species. |
 | `gender`   | choices=["F","M","female","male"]. Sample gender. |
 | `gtexGene` | The gtexGene file from the GTEx project that contains gene expression data. |
-| `lysis_error_SigProfile` | Lysis error signature file. |
-| `PCR_errors_SigProfile` | PCR error signature file. |
-| `bkg` | Background error file. |
+| `error_SigProfile` | The referenced error signature file. |
 | `cluster` | Optional. Spots cluster file. |
 | `h5ad_file` | Optional. Spatial transcriptomics data information file in h5ad format. |
 
@@ -166,17 +164,17 @@ Example demo
 # create output directory
 mkdir -p demo_output/demo/bam_filter/
 # filter bam file (1. reads not in tissue; 2. reads with low Mapping Quality; 3. reads with high mismatches)
-sed 's/,/\t/g' demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv | sed '1d' | awk '{if ($2==0) print $1, "OUT"; else print $1, "IN"}' OFS="\t" >demo_output/demo/bam_filter/demo_barcode.txt;sinto filterbarcodes -b demo_input/Spaceranger_result/outs/possorted_genome_bam.bam -c demo_output/demo/bam_filter/demo_barcode.txt --barcodetag "CB" --outdir demo_output/demo/bam_filter -p 4; samtools view -e "[nM] <= 5" -q 255 -o demo_output/demo/bam_filter/IN_filter.bam demo_output/demo/bam_filter/IN.bam;samtools index demo_output/demo/bam_filter/IN.bam; samtools index demo_output/demo/bam_filter/IN_filter.bam
+sed 's/,/\t/g' demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv | sed '1d' | awk '{if ($2==0) print $1, "OUT"; else print $1, "IN"}' OFS="\t" >demo_output/demo/bam_filter/demo_barcode.txt;sinto filterbarcodes -b demo_input/Spaceranger_result/outs/possorted_genome_bam.bam -c demo_output/demo/bam_filter/demo_barcode.txt --barcodetag "CB" --outdir demo_output/demo/bam_filter -p 4;samtools index demo_output/demo/bam_filter/IN.bam; samtools view -e "[nM] <= 5" -q 255 -o demo_output/demo/bam_filter/IN_filter.bam demo_output/demo/bam_filter/IN.bam; samtools index demo_output/demo/bam_filter/IN_filter.bam
 ```
 
 #### Step0.2: mpile-up to get the candidate mutation list
 Example demo
 ```bash
 # mpile-up (please offer the absolute path of ${genome.fa} )
-samtools mpileup demo_output/demo/bam_filter/IN_filter.bam -s -B -Q 0 -q 0 -d 200000 -f ${genome.fa} | java -classpath others/java_mpileup/ PileupFilter --minbasequal=20 --minmapqual=20 --asciibase=33 --filtered=1| awk '$3!="N"' |cut -f 1-3,8-15 >demo_output/demo/mpileup.result
+samtools mpileup demo_output/demo/bam_filter/IN_filter.bam -s --excl-flags 0 -B -Q 0 -q 0 -d 200000 -f ${genome.fa} | java -classpath others/java_mpileup/ PileupFilter --minbasequal=0 --minmapqual=0 --asciibase=33 --filtered=1| awk '$3!="N"' |cut -f 1-3,8-15 >demo_output/demo/mpileup.result
 
 # filter mpile-up results to get initial candidate sites
-awk '$6+$7+$9+$10 >= 5 && $4+$5+$6+$7+$9+$10>=30' demo_output/demo/mpileup.result |awk ' ($6+$7+$9+$10)/($4+$5+$6+$7+$9+$10)>=0.001' - > demo_output/demo/mpileup.filter.result
+awk '$6+$7+$9+$10 >= 5 && $4+$5+$6+$7+$9+$10>=30' demo_output/demo/mpileup.result |awk '($6+$7+$9+$10)/($4+$5+$6+$7+$9+$10)<=0.6 && ($6+$7+$9+$10)/($4+$5+$6+$7+$9+$10)>=0.001' - > demo_output/demo/mpileup.filter.result
 ```
 
 #### Step0.3: Get population allele frequency
@@ -243,7 +241,7 @@ python 1_run_data_process.py \
 | `--thread` | Optional (default=2). Number of threads to use for parallel processing. |
 | `--epsQ` | Optional (default=20). Threshold for consensus read quality filtering. |
 | `--alpha` | Optional (default=0.05). Confidence level. |
-| `--epsAF` | Optional (default=0.01). Threshold for alternative allele frequency (background error rate) test. |
+| `--epsAF` | Optional (default=0.003). Threshold for alternative allele frequency (background error rate) test. |
 
 
 #### Example demo
@@ -300,7 +298,7 @@ python 2_run_genotyper.py \
 | `--cell_num` | Optional (default=20). The estimated cell numbers per spot. If not given cellnum_file. |
 | `--epsQ` | Optional (default=20). Threshold for consensus read quality filtering. |
 | `--alpha` | Optional (default=0.05). Confidence level. |
-| `--epsAF` | Optional (default=0.01). Threshold for alternative allele frequency (background error rate) test. |
+| `--epsAF` | Optional (default=0.003). Threshold for alternative allele frequency (background error rate) test. |
 | `--mu` | Optional (default=1e-7). The population mutation rate prior. |
 | `--max_dp` | Optional (default=1000). The max threshold for the read depth, if depth larger than the threshold, the allele numbers would be downsampled. |
 | `--vaf` | Optional (default=1e-5). Avoid 0 allele frequency. |
@@ -360,9 +358,7 @@ python 3_run_get_features.py \
   --gff3_file <GFF3FILE> \
   --vaf_cluster_file <CLUSTERVAFFILE> \
   --gtexGene <GTEXTFILE> \
-  --artifact_signature1 <LYSISERRORSIGFILE> \
-  --artifact_signature2 <PCRERRORSIGFILE> \
-  --bkg <BKGFILE>
+  --artifact_signature <ERRORSIGFILE> \
 ``` 
 
 
@@ -391,8 +387,7 @@ python 3_run_get_features.py \
 | `--gff3_file` | Optional. Gff3 file. |
 | `--vaf_cluster_file` | Optional. File contains the alternative allele frequency (vaf) for each cluster. |
 | `--gtexGene` | Optional. gtexGene file. |
-| `--artifact_signature1` | Optional. Lysis error signature file. |
-| `--artifact_signature2` | Optional. PCR error signature file. |
+| `--artifact_signature` | Optional. Error signature file. |
 | `--bkg` | Optional. Background error file. |
 
 
@@ -419,10 +414,10 @@ python 3_run_get_features.py \
   --gff3_file demo_input/Resource/demo.gencode.v44.annotation.exon.sort.gff3 \
   --vaf_cluster_file demo_output/demo/geno_files/demo.cluster_vaf.out \
   --gtexGene demo_input/Resource/demo.gtexGene.txt \
-  --artifact_signature1 demo_input/Resource/lysis_error_SigProfile.txt \
-   --artifact_signature2 demo_input/Resource/PCR_errors_SigProfile.txt \
-   --bkg demo_input/demo_bkg.txt \
-   --barcodes demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv
+  --artifact_signature \
+  --reference_demo_input/Resource/error_SigProfile.txt 
+  --bkg demo_input/demo_bkg.txt \
+  --barcodes demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv
 ```
 This step may cost around 42 seconds if running on the demo data.
 

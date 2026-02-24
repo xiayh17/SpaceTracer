@@ -1,0 +1,2 @@
+SyntaxError in file /storage/douyanmeiLab/yangzhirui/SpaceTracer/run_snakemake_for_conda, line 102:
+Colon expected after keyword log. (run_snakemake_for_conda, line 102)
