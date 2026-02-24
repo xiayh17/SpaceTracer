@@ -1,8 +1,0 @@
-Config file config.txt is extended by additional config specified via the command line.
-Building DAG of jobs...
-MissingInputException in rule get_features in file /storage/douyanmeiLab/yangzhirui/SpaceTracer/run_snakemake_for_conda, line 203:
-Missing input files for rule get_features:
-    output: demo/features_dir/demo.spatial_feature.txt, demo/features_dir/demo.features.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
-    wildcards: sample=demo
-    affected files:
-        demo/error/demo.lysis_profile.txt

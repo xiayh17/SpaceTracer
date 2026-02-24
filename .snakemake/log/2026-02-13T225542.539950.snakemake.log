@@ -1,7 +1,0 @@
-Config file config.txt is extended by additional config specified via the command line.
-Failed to clean up metadata for the following files because the metadata was not present.
-If this is expected, there is nothing to do.
-Otherwise, the reason might be file system latency or still running jobs.
-Consider running metadata cleanup again.
-Files:
-output/demo/features_dir/demo.phase_afterUMIcombination.txt
