@@ -6,6 +6,8 @@ SpaceTracer is an open-source algorithm capable of accurately detecting mosaic S
 ## Release Notes
 - 2025/03/31: Version 1.0.0  
 This is the initial version of SpaceTracer.
+- 2026/02/25: Version 1.1.0  
+This release focuses on updating the genotype calculation and enhancing the features used in the random forest model. Additionally, we've added more filter steps to improve the accuracy of the results.
 
 
 ## Table Contents
@@ -333,7 +335,7 @@ This step may cost around 4 seconds if running on the demo data.
 
 
 ### Step3: Feature Extraction
-This step extract the spatial-level, read-level and site-level features for each site.
+This step extracts the spatial-level, read-level and site-level features for each site.
 
 ```bash
 python 3_run_get_features.py \
@@ -359,6 +361,7 @@ python 3_run_get_features.py \
   --vaf_cluster_file <CLUSTERVAFFILE> \
   --gtexGene <GTEXTFILE> \
   --artifact_signature <ERRORSIGFILE> \
+  --reference_error_profile <LYSISSIGFILE>
 ``` 
 
 
@@ -387,7 +390,8 @@ python 3_run_get_features.py \
 | `--gff3_file` | Optional. Gff3 file. |
 | `--vaf_cluster_file` | Optional. File contains the alternative allele frequency (vaf) for each cluster. |
 | `--gtexGene` | Optional. gtexGene file. |
-| `--artifact_signature` | Optional. Error signature file. |
+| `--artifact_signature` | Optional. Sample artifact signature file. |
+| `--reference_error_profile` | Optional. Reference data lysis error signature file. |
 | `--bkg` | Optional. Background error file. |
 
 
@@ -395,7 +399,7 @@ python 3_run_get_features.py \
 
 ```bash
 python 3_run_get_features.py \
-  --fasta /storage/douyanmeiLab/yangzhirui/Reference/Cellranger/refdata-gex-GRCh38-2020-A/fasta/genome.fa \
+  --fasta genome.fa \
   --raw_bam demo_output/demo/bam_filter/IN.bam \
   --filter_bam demo_output/demo/bam_filter/IN_filter.bam \
   --gender male \
@@ -416,8 +420,9 @@ python 3_run_get_features.py \
   --gtexGene demo_input/Resource/demo.gtexGene.txt \
   --artifact_signature \
   --reference_demo_input/Resource/error_SigProfile.txt 
-  --bkg demo_input/demo_bkg.txt \
-  --barcodes demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv
+  --reference_error_profile lysis_Signatures_split3.Sigprofile \
+  --barcodes demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv \
+
 ```
 This step may cost around 42 seconds if running on the demo data.
 
@@ -488,8 +493,8 @@ python 4_run_model_predict.py \
 
 ```bash
 python 4_run_model_predict.py \
-  --input demo_output/demo/features_dir/demo.features.add_hFDR.txt \
-  --outdir demo_output/demo/predict \
+  --input demo/output/features_dir/demo.features.add_hFDR.txt \
+  --outdir demo/output/predict \
   --outprefix demo \
   --train FALSE \
   --thr_altcount 5 \
@@ -506,7 +511,69 @@ This step may cost around 12 seconds if running on the demo data.
 - `demo/output/predict/results/demo_pred_truesites.txt`
 - `demo/output/predict/results/demo_total_pred_truesites.txt`
 
-The final somatic mutation list detected would be saved in the `demo/output/predict/results/demo_total_pred_truesites.txt` file.
+The final predicted somatic mutation list detected would be saved in the `demo/output/predict/results/demo_total_pred_truesites.txt` file.
+
+
+
+### Step5: Filter
+This step filters the predicted result using public datasets and Panel of Normals (PON) data we provided.
+
+```bash
+bash 5_remove_recurrent_mutations.sh \
+  --src_path <SRC_PATH> \
+  --pred_sites <PRED_SITES> \
+  --feature_path <FEATURE_PATH> \
+  --outpath <OUTPUT_PATH> \
+  --germ_path <GERM_PATH> \
+  --genome_fa <GENOME_FA> \
+  --rna_editing_path <RNA_EDITING_PATH> \
+  --gtexGene <GTEX_GENE> \
+  --dbSNP <DB_SNP> \
+  --imprinted_genes <IMPRINTED_GENES> \
+  --PON_file <PON_FILE>
+```
+
+#### Input parameters
+
+| Parameter            | Description                                                    |
+| -------------------- | -------------------------------------------------------------- |
+| `--src_path`         | Path to the working directory. |
+| `--pred_sites`       | Path to the file containing the predicted mutation sites.      |
+| `--feature_path`     | Path to the feature file used for mutation classification.     |
+| `--outpath`          | Directory where the processed output files will be saved.      |
+| `--germ_path`        | Path to the germline information file.                         |
+| `--genome_fa`        | Path to the genome FASTA file.                                 |
+| `--rna_editing_path` | Path to RNA editing data directory.                            |
+| `--gtexGene`         | Path to the GTEx gene expression file.                         |
+| `--dbSNP`            | Path to the dbSNP file.                                        |
+| `--imprinted_genes`  | Path to the BED file for imprinted genes.                      |
+| `--PON_file`         | Path to the Panel of Normals (PON) file.                       |
+
+
+#### Example demo
+
+```bash
+bash 5_remove_recurrent_mutations.sh \
+  --src_path ${SpaceTracer_path} \
+  --pred_sites demo/output/predict/results/demo_total_pred_truesites.txt \
+  --feature_path demo/output/features_dir/demo.features.add_hFDR.txt \
+  --outpath demo/output/predict_spatial_feature_preserved \
+  --germ_path $germ_path \
+  --genome_fa $genome_fa \
+  --rna_editing_path $RNA_editing_path \
+  --gtexGene $gtexGene \
+  --dbSNP $dbSNP \
+  --imprinted_genes $imprinted_genes \
+  --PON_file $PON_file
+```
+
+#### Example output
+- `demo/output/predict_spatial_feature_preserved/pred.FINAL.txt`
+
+
+### Step6: Phylogeny
+
+At present, users need to clone the PhyloSOLID GitHub repository (https://github.com/douymLab/PhyloSOLID) for tree building. This dependency will be resolved in the March update, where PhyloSOLID will be merged directly into the SpaceTracer codebase.
 
 
 
