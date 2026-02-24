@@ -198,7 +198,6 @@ def get_chrom_list_from_list(in_list):
         # print(chr_list)
         for file,chrom in zip(in_list,chr_list):
             file_dict[str(chrom)]=file
-    print(file_dict)
     return file_dict
 
     
@@ -249,7 +248,6 @@ def split_vcf(vcf_file,split_vcf_dir,work_dir,split_type,split_line=10000):
     else:
         print(f"wrong input for split type {split_type}!")
     
-    print(command)
 
     result=subprocess.run(command,shell=True)
     # print(result.returncode)
@@ -273,7 +271,6 @@ def split_bam_by_chrom(bam_file,out_dir,work_path,run_index=False):
     outname_prefix=bam_name+".REF_"
     split_bam_list=[]; split_bam_dict={}
     # run_index=False
-    print(bam_file,out_dir)
     if os.listdir(out_dir)==[]:
         run_index=True
     # else:               
@@ -281,7 +278,6 @@ def split_bam_by_chrom(bam_file,out_dir,work_path,run_index=False):
     #         if outname_prefix not in file:
     #             print(outname_prefix,file)
     #             run_index=True
-    print(run_index)
     if run_index == True:
         #result=subprocess.run("echo yes",shell=True)
         result=subprocess.run("cd %s;rm *;ln -s %s .; samtools index %s ;bamtools split -in %s -reference;cd %s" \
@@ -311,13 +307,11 @@ def split_bam_by_chrom(bam_file,out_dir,work_path,run_index=False):
         prefix=os.path.basename(bam_file).replace(".bam","")+".REF_"
         elements=str(os.path.basename(files).replace(bam_name+".REF_","")).replace(".bam","").replace(prefix,"") 
         elements_all.append(elements) 
-    print(elements_all)
     # chr_list=[k for k, v in dict(collections.Counter(elements_all)).items() if v == 1]
 
     # print(chr_list)
     for file,chrom in zip(split_bam_list,elements_all):
         split_bam_dict[str(chrom)]=os.path.join(out_dir,file)
-    print(split_bam_dict)
     return split_bam_dict
 
 

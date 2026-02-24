@@ -11,3 +11,5 @@ demo_input/Resource
 config.txt
 old_demo_output
 run_snakemake_for_conda_old
+.gitignore
+run_snakemake_for_conda_beifen
