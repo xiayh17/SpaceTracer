@@ -1,0 +1,29 @@
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
+
+SpaGCN==1.2.7
+vcfpy==0.13.6
+colorcet==3.0.1
+pybedtools==0.9.1
+pyfaidx==0.7.2.2
+pysam==0.22.0
+esda==2.5.0
+wordcloud
+opencv-python
+pysal==23.07
+scanpy==1.10.2
+tqdm==4.66.1
+pephubclient==0.4.2
+GraphST==1.1.1
+pot==0.9.6
+memory-profiler==0.61
+imbalanced-learn==0.12.4 
+imblearn==0.0
+cloudpickle==3.1.2 
+future==1.0.0 
+hyperopt==0.2.7 
+py4j==0.10.9.93
+shap==0.49.1
+slicer==0.0.8
+pyranges=0.1.4
+

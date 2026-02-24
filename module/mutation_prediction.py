@@ -19,13 +19,15 @@ import seaborn as sns
 from sklearn.decomposition import PCA
 from wordcloud import WordCloud
 from utils import check_dir, check_file
+import shap
 
 
 def mutation_classification(input_file, output_dir, sample_name, model_dir="./", model_name="P6_rep2", random_seed=100, \
                             train=False, true_sites=[], artifact_sites=[], thr_altcount=0, thr_altSpotNum=None, \
-                            subset=None, drop_subset=None, hard_filter=True, \
+                            thr_popAF=1e-4, subset=None, drop_subset=None, no_spatial=False, hard_filter=True, \
                             phase_refine=True, artifact_downsample_rate=0.5, encoder="label", save_models=True, \
                             plot=True, annotate_mosaic=True, annotate_outlier=False, n_features=20, \
+                            save_pca=True, save_shap=False, use_lr=False, not_pred_het=True, transform_old_name=False, \
                             smote=True, tune="random_search", k_neighbors=4, sampling_strategy="auto", n_jobs=None, \
                             n_estimators=100, max_depth=None, min_samples_split=2):
     """
@@ -46,8 +48,11 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         thr_altcount - only consider the sites whose alternative allele number is larger than the threshold (default=0)
         thr_altSpotNum - the threshold of the number of spots contains the alternative alleles, only use when we want to 
                          predict for the spot-specific mutations (default=None)
+        thr_popAF - the threshold of the population allele frequency, only consider the sites whose alternative allele 
+                    frequency is smaller than the threshold (default=1e-4)
         subset - the features used to classificate the true somatic mutations, use all features if 'None' (default=None)
         drop_subset - the features do not want to be used to classificate the true somatic mutations (default=None)
+        no_spatial - Boolean variable of whether not using the spatial features in the model (default=False)
         hard_filter - Boolean variable of whether performing the hard filters on the predicted sites (default=True)
         phase_refine - whether doing the phase refinement (default=True)
                        True: use an additional random forest model to classificate the haplotype=3 phased sites into 
@@ -63,6 +68,11 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         annotate_mosaic - Boolean variable of whether annotating the mosaic sites in the training set PCA scatter plots (default=True)
         annotate_outlier - Boolean variable of whether annotating the outlier sites in all PCA scatter plots (default=False)
         n_features - the number of the most-important features from the random forest model used in the PCA projection (default=20)
+        save_pca - Boolean variable of whether saving the PCA transformed value, together with the clean feature values (default=True)
+        save_shap - Boolean variable of whether saving the SHAP values for the features (default=False)
+        use_lr - Boolean variable of whether using logistic regression model to classify the somatic mutations (default=False)
+        not_pred_het - Boolean variable of whether not predicting the heterozygous sites using logistic regression model (default=True)
+        transform_old_name - Boolean variable of whether transforming the column names to new version before processing (default=False)
         
         # Following are the parameters used in the random forest and logistic regression model
         smote - whether use SMOTE (Synthetic Minority Over-sampling Technique) to over-sample the minority class 
@@ -87,13 +97,26 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         max_depth - the maximum depth of the tree (default=None)
         min_samples_split - the minimum number of samples required to split an internal node (default=2)
     """
+    print("####\n",no_spatial,type(no_spatial))
     # read in feature info with warning bad rows (less or more columns)
     df = pd.read_csv(input_file, sep="\t", na_values=['no', 'NA', 'NaN'], index_col=False, on_bad_lines='warn')
+    # convert tuple-like '("no",)' forms into NaN
+    df.replace(r"^\('no',\)$", np.nan, regex=True, inplace=True)
 
-    # filter the alternative allele count
-    df = df[df['alt_dp_consensus'] >= thr_altcount]
+    # modify the column name to new version
+    if transform_old_name:
+        print("Transform the column name to new version")
+        df = rename_columns(df, old2new_mapping)
+
+    # filter the alternative allele count (using new column names)
+    df = df[df['consensus_alt_allele_count'] >= thr_altcount]
     if thr_altSpotNum is not None:
-        df = df[df['alt_SpotNum'] <= thr_altSpotNum]
+        df = df[df['alt_spot_num'] <= thr_altSpotNum]
+
+    # filter according to the population allele frequency
+    if 'falt' in df.columns:
+        df = df[df['falt'] < thr_popAF]
+        print(f"Filter out sites with population allele frequency larger than {thr_popAF}.")
         
         
     # ====================================================================
@@ -102,54 +125,105 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     # transform some columns with lists to float numbers
     if 'mappabilityScore' in df.columns:
         df['mappabilityScore'] = df['mappabilityScore'].apply(list2min)
-    if 'distanceExon' in df.columns:
-        df['distanceExon'] = df['distanceExon'].apply(list2min)
-    if 'MI_p_expression' in df.columns:
-        df['MI_p_expression'] = df['MI_p_expression'].apply(list2mean)
-    if 'MI_s_expression' in df.columns:
-        df['MI_s_expression'] = df['MI_s_expression'].apply(list2mean)
-    if 'SGB' in df.columns:
-        df['SGB'] = pd.to_numeric(df['SGB'], errors='coerce')
+        df = df[df['mappabilityScore'] != 0]
+        df = df.drop('mappabilityScore', axis=1)
+    if 'cause_poly_alt' in df.columns:  # updated from 'cause_ploy_alt'
+        df = df[df['cause_poly_alt'] == 0]
+        df = df.drop('cause_poly_alt', axis=1)
+    if 'alt_read_number_perUMI_max' in df.columns:
+        df = df[df['alt_read_number_perUMI_max'] >= 2]
+        df = df.drop('alt_read_number_perUMI_max', axis=1)
+    
+    # only hard cutoff some columns
+    cutoff_cols = ['indel_proportion_for_site']  # updated from 'indel_proportion_SNPonly'
+    for col in cutoff_cols:
+        if col in df.columns:
+            df = df[df[col] < 0.05]
+            df = df.drop(col, axis=1)
     
     # check the identifier column name
     if '#identifier' in df.columns:
         df.rename(columns={'#identifier': 'identifier'}, inplace=True)
         
     # normalize the depth (Counts Per Million (CPM))
-    df['dp_cpm'] = (df['dp'] / df['dp'].sum()) * 1e6
-    df = df.drop('dp', axis=1)
-
-    # delete the gene function related columns and other non-reasonable features
-    not_related_columns = ['gene_type', 'geneStrand', 'major_read_strand', 'GCcontent', \
-                           'anno', 'anno_gene', 'DNAMutationType', 'RNAMutationType', \
-                           'alt_SpotNum', 'outlier_clusters', 'vaf_cluster_mean', 'vaf_cluster_std_dev', \
-                           'af', 'alpha', 'beta', 'rweigh', 'true_similarity', 'major_read_strand', \
-                           'refine_hFDR99', 'refine_hFDR49', 'refine_hFDR29', 'refine_hFDR9', 'refine_hFDR1', \
-                           'reverse_dp', 'forward_dp', 'alt_reverse_dp', 'alt_forward_dp']
+    df['read_depth_cpm'] = (df['read_depth'] / df['read_depth'].sum()) * 1e6  # updated from 'dp'
+    df = df.drop('read_depth', axis=1)  # updated from 'dp'
+    
+    # keep the original p_values
+    keep_p_values_df = df[["identifier", "per_UMI_end_remove_clip_p", "mismatches_p", 
+                           "per_alt_UMI_end_remove_clip_value_median", "per_alt_UMI_end_value_median"]]
+    for col in ["per_UMI_end_remove_clip_p", "mismatches_p"]:
+        keep_p_values_df[col] = keep_p_values_df[col].fillna(0)
+    
+    # delete the gene function related columns and other non-reasonable features (updated with new column names)
+    not_related_columns = ['gene_type', 'gene_strand', 'major_read_strand', 'GCcontent', \
+                            'variant_anno', 'gene_anno', 'DNAMutationType', 'RNAMutationType', \
+                            'alt_spot_num', 'spot_num', 'outlier_clusters', 'vaf_cluster_mean', 'vaf_cluster_std_dev', \
+                            'af', 'alpha', 'beta', 'rweigh', 'true_similarity', 'hFDR', \
+                            'refine_hFDR99', 'refine_hFDR49', 'refine_hFDR29', 'refine_hFDR9', 'refine_hFDR1', 'refine_hFDR', \
+                            'cosine_sim1', 'cosine_sim2', 'cosine_sim3', 'false_similarity1', 'false_similarity2', 'false_similarity3', \
+                            'false_prop1', 'false_prop2', 'false_prop3', 'true_prop', 'true_similarity', \
+                            'read_depth_reverse', 'read_depth_forward', 'alt_allele_count_reverse', 'alt_allele_count_forward', \
+                            'UMI_number_per_spot_median', 'UMI_number_per_spot_mean', \
+                            'ref_UMI_number_per_spot_max', 'alt_UMI_number_per_spot_max', 'ref_UMI_number_per_spot_median', \
+                            'alt_UMI_number_per_spot_median', 'context_10bp', 'distance_to_end_by_UMI_p', 'distance_to_end_by_UMI_s', \
+                            'falt', 'fref', 'left_alt_querypos_num_remove_clip', 'left_ref_querypos_num_remove_clip', \
+                            'right_alt_querypos_num_remove_clip', 'right_ref_querypos_num_remove_clip', 'ref_querypos_num',\
+                            'muts_in_cluster_p', 'muts_in_cluster_s', 'only_alt_mutant_spot_prop', \
+                            'ase', 'chrom', 'editing', 'end', 'sig_pvalue', 'signature_filter', 'start', \
+                            'ref_allele_count', 'consensus_ref_allele_count', 'alt2_allele_count', 'consensus_alt2_allele_count', \
+                            'mapper_odds', 'mapper_p', 'sb_p', 'sb_odds', 'alt_allele_count', 'consensus_alt_allele_count', \
+                            'alt_consistent_UMI_prop_relaxed', 'alt_consistent_UMI_prop_strict', 'alt_vs_total_dp_paired_wilcoxon_r', \
+                            'context_10bp', 'muts_in_cluster_p', 'muts_in_cluster_s', 'validate', 'raw_alt_spot_num', 'raw_spot_num', \
+                            'only_one_UMI_in_spot_raw_count', 'only_one_alt_UMI_in_spot_raw_count', \
+                            'downsample_spot_num', 'downsample_mut_spots_vaf_mean', 'downsample_mut_spots_vaf_median', 'downsample_only_alt_mutant_spot_prop']
+    
     for col in not_related_columns:
         if col in df.columns:
             df = df.drop(col, axis=1)
 
-    # delte the columns generated for validation but not prediction
-    other_validate_columns = ['alt_querypos_num', 'falt', 'fref', 'left_alt_querypos_num_remove_clip', \
-                              'left_ref_querypos_num_remove_clip', 'muts_in_cluster_p', 'muts_in_cluster_s', \
-                              'ref_querypos_num', 'right_alt_querypos_num_remove_clip', 'right_ref_querypos_num_remove_clip', \
-                              'ase', 'chrom', 'editing', 'end', 'sig_pvalue', 'signature_filter', 'start']
-    for col in other_validate_columns:
-        if col in df.columns:
-            df = df.drop(col, axis=1)
-
-    # drop some features which are not distinguishable for classification
-    undistinguishable_columns = ['querypos_p', 'querypos_s', 'leftpos_p', 'leftpos_s', 'seqpos_p', 'seqpos_s', \
-                                 'ref_hardclip_prop', 'alt_hardclip_prop', 'ref_softclip_prop', 'alt_softclip_prop', \
-                                 'spotNum', 'mut_rate_prob', 'mut_rate_likelihood', 'num_outlier_cluster', 'ref_ins_major_prop', \
-                                 'dp_cpm', 'dp_consensus', 'alt_dp_consensus', 'VDB', 'RPBZ', 'hardclip_prop_p', 'hardclip_prop_odds', \
-                                 'MI_p_expression', 'MI_s_expression', 'outlier_MI_p', 'outlier_MI_s', 'sb_p', 'sb_odds']
+    # drop some features which are not distinguishable for classification (updated with new column names)
+    undistinguishable_columns = ['ref_hardclip_prop', 'alt_hardclip_prop', 'hardclip_length_p', 'hardclip_length_s', \
+                                'hardclip_prop_p', 'hardclip_prop_odds', 'MI_p_expression', 'MI_s_expression', \
+                                'mutant_rate', 'mut_rate_likelihood', 'ref_ins_major_prop', \
+                                'num_outlier_cluster', 'outlier_vaf', 'outlier_MI_p', 'outlier_MI_s', \
+                                'read_depth', 'read_depth_cpm', 'consensus_UMI_count', 'alt_allele_count', 'consensus_alt_allele_count', 'VDB', 'RPBZ', 'SGB', \
+                                'chi2_p_read', 'chi2_p_UMI', 'chi2_stat_read', 'chi2_stat_UMI', 'distanceExon', \
+                                'distance_to_end_s', 'distance_to_end_p', 'distance_to_end_rbc', 'distance_to_end_p_adj', \
+                                'distance_to_end_remove_clip_s', 'distance_to_end_remove_clip_p', \
+                                'ref_baseq1b_p', 'ref_baseq1b_s', 'ref_baseq1b_rbc', 'ref_baseq1b_p_adj', \
+                                'mean_distance_to_end', 'median_distance_to_end', 'mean_distance_to_end_remove_clip', \
+                                'median_distance_to_end_remove_clip', 'ref_UMI_end_mean', 'ref_UMI_end_median', \
+                                'mapq_difference', 'ref_read_number_perUMI_median', 'alt_read_number_perUMI_median', \
+                                'ref_read_number_perUMI_max', 'alt_read_number_perUMI_max', 'UMI_number_per_spot_s', \
+                                'UMI_number_per_spot_p', 'read_number_per_spot_s', 'read_number_per_spot_p', \
+                                'vaf', 'consensus_vaf', 'all_spots_vaf_max', 'equal_to_previous_bases', \
+                                'ref_ins_major_prop', 'per_ref_UMI_end_remove_clip_mean', 'per_ref_UMI_end_remove_clip_median', \
+                                'per_ref_UMI_end_value_mean', 'per_ref_UMI_end_value_median', 'per_alt_UMI_end_value_mean', 'per_alt_UMI_end_value_median', \
+                                'per_ref_UMI_end_remove_clip_value_mean', 'per_ref_UMI_end_remove_clip_value_median', 'per_alt_UMI_end_remove_clip_value_mean', \
+                                'per_alt_UMI_end_remove_clip_value_median', 'ref_UMI_end_mean_remove_clip', 'ref_UMI_end_median_remove_clip', \
+                                'alt_UMI_end_mean_remove_clip', 'alt_UMI_end_median_remove_clip', 'per_ref_UMI_end_mean', 'per_ref_UMI_end_median', \
+                                'per_alt_UMI_end_mean', 'per_alt_UMI_end_median', 'per_UMI_end_p_adj', 'per_UMI_end_rbc', \
+                                'UMI_end_p_adj', 'UMI_end_rbc', 'UMI_end_remove_clip_p_adj', 'UMI_end_remove_clip_rbc', \
+                                'alt_UMI_end_mean', 'alt_UMI_end_median']
+    
     for col in undistinguishable_columns:
         if col in df.columns:
             df = df.drop(col, axis=1)
 
-    # all haplotype-related columns
+    # delete the columns which are the statistics for the features but relate to sample size (updated with new column names)
+    removed_stats_columns = ['querypos_s', 'leftpos_s', 'seqpos_s', 'baseq_s', 'alt_baseq1b_s', 'UMI_end_s', \
+                             'mismatches_s', 'mapq_s', 'read_number_s', 'softclip_length_s', 'wilcoxon_s', 'UMI_end_remove_clip_s', \
+                             'reads_with_indel_odds', 'multi_mapper_odds', 'strand_bias_odds', 'softclip_prop_odds', \
+                             'baseq_p', 'alt_baseq1b_p', 'querypos_p', 'leftpos_p', 'seqpos_p', 'UMI_end_p', 'UMI_end_remove_clip_p', \
+                             'mismatches_p', 'mapq_p', 'read_number_p', 'softclip_length_p', 'per_UMI_end_s', 'per_UMI_end_p', \
+                             'per_UMI_end_remove_clip_s', 'per_UMI_end_remove_clip_p']
+    
+    for col in removed_stats_columns:
+        if col in df.columns:
+            df = df.drop(col, axis=1)
+
+    # all haplotype-related columns (keeping these as they are not in the mapping)
     haplotype_columns = ['combine_nearest_phase_haplotype', 'no_combine_most_phase_haplotype', \
                          'no_combine_nearest_phase_haplotype', 'combine_most_phase_haplotype']
     # find the most frequent haplotype
@@ -157,9 +231,9 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     # drop the original haplotype columns
     df = df.drop(haplotype_columns, axis=1)
 
-
     # delete the rows if the likelihood columns and AF columns contain NA
-    df = df.dropna(subset=['mean_AFspot', 'max_AFspot', 'mosaic_likelihood'])
+    df = df.dropna(subset=['mosaic_likelihood'])
+    df = df.dropna(subset=['baseq_p_adj'])
 
     # interpolate the NAs in the p-value and t-value columns as log(1)=0 and 0
     psval_cols = [col for col in df.columns if col.endswith('_p') or col.endswith('_s') or col.endswith('_odds')]
@@ -190,15 +264,23 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         if col in df.columns:
             df[col] = df[col].fillna(np.inf)
     
-    # interpolate the other NAs with 0
-    other_num_cols = ['alt2_proportion_consensus', 'spotNum', 'MI_expression', \
-                      'ref_ins_major_prop', 'mappabilityScore','mutant_rate', 'alt_multi_map_prop', \
-                      'ref_multi_map_prop', 'equal_to_previous_bases', 'cause_ploy_alt']
+    # interpolate the other NAs with 0 (updated with new column names)
+    other_num_cols = ['consensus_alt2_proportion', 'spot_num', 'MI_expression', \
+                      'ref_ins_major_prop', 'mappabilityScore', 'mutant_rate', 'alt_multi_map_prop', \
+                      'ref_multi_map_prop', 'equal_to_previous_bases', 'cause_poly_alt']
+    
     for col in other_num_cols:
         if col in df.columns:
             df[col] = df[col].fillna(0)
+
+    # checking mapping quality columns are numeric
+    mapq_columns = ["mapq_mean", "ref_mapq_mean", "alt_mapq_mean"]
+    for col in mapq_columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    # drop rows where ANY numeric column failed conversion
+    df = df.dropna(subset=mapq_columns)
         
-    # delete the columns with all massing values
+    # delete the columns with all missing values
     df = df.dropna(axis=1, how='all')
     # drop the rows if still contains NAs
     df = df.dropna()
@@ -216,6 +298,7 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     
     # set index
     df = df.set_index("identifier")
+    
     # get the index for artifacts
     if artifact_sites == []:
         artifact_index = df.index[df["haplotype"] == "haplo>3"]
@@ -231,6 +314,7 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     elif isinstance(artifact_sites, list):
         artifact_index = artifact_sites
         print('Training models with the artifact sites given.')
+    
     # get the index for each haplotype
     het_index = df.index[df["haplotype"] == "haplo=2"]
     unphased_index = df.index[df["haplotype"] == "unphased"]
@@ -246,6 +330,7 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         for column in df.select_dtypes(include=['object']).columns:
             print(column)
             le = LabelEncoder()
+            df[column] = df[column].astype(str)
             df[column] = le.fit_transform(df[column])
     else:
         # use one-hot encoding
@@ -255,27 +340,40 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         # drop original non-numeric columns and concatenate the new DataFrame
         df = pd.concat([df.drop(df.select_dtypes(include=['object']), axis=1), encoded], axis=1)
 
-
-    # sub-dataframe for het and mutation classification
+    # sub-dataframe for het and mutation classification (updated with new column names)
     # features for classify heterozygous sites
     het_features = ['AFind',
-                    'KS_p',
-                    'mut_rate_vaf',
-                    'mean_AFspot',
-                    'MI_p',
-                    'mutant_rate',
-                    'mismatches_p']
+                    'mut_vs_nonmut_spots_KS_p',  # updated from 'KS_p'
+                    'mut_spots_prop_by_vaf',      # updated from 'mut_rate_vaf'
+                    'all_spots_vaf_mean',         # updated from 'mean_AFspot'
+                    'mut_vs_nonmut_spots_MI_p',   # updated from 'MI_p'
+                    'mut_spots_prop_by_probablity', # updated from 'mut_rate_prob'
+                    'mismatches_p_adj']
+    
     df_het_features = df[het_features]
 
     # get subset features for mutation classification
     df_nophase = df.copy()
     for col in phase_rel_cols:
         if col in df_nophase.columns:
-            df_nophase = df_nophase.drop(phase_rel_cols, axis=1)
+            df_nophase = df_nophase.drop(col, axis=1)
+    
+    het_used_cols = ['AFind', 'all_spots_vaf_mean']  # updated from 'mean_Afspot'
+    for col in het_used_cols:
+        if col in df_nophase.columns:
+            df_nophase = df_nophase.drop(col, axis=1)
+    
     if subset is not None:
         df_nophase = df_nophase[subset]
     if drop_subset is not None:
         for col in drop_subset:
+            if col in df_nophase.columns:
+                df_nophase = df_nophase.drop(col, axis=1)
+    # remove the spatial-related features if not using spatial features
+    if no_spatial:
+        spatial_features = ['pass_spatial_test', 'mut_vs_nonmut_spots_KS_p', 'mut_vs_nonmut_spots_KS_s', \
+                            'mut_vs_nonmut_spots_MI_p', 'mut_vs_nonmut_spots_MI_s']
+        for col in spatial_features:
             if col in df_nophase.columns:
                 df_nophase = df_nophase.drop(col, axis=1)
 
@@ -348,62 +446,69 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     # Training Models
     # ====================================================================
     if train:
-        # ====================================================================
-        # Phase Refinement Model
-        # ====================================================================
-        # pair each index with its label
-        phased_paired_indices = [(index, "mosaic") for index in phased_true_index] + \
-                                [(index, "artifact") for index in artifact_index] + \
-                                [(index, "het") for index in het_index]
-        # shuffle the list to mix indices of different labels
-        random.seed(random_seed)
-        random.shuffle(phased_paired_indices)
-        # generate training data
-        X_phased_df = df.loc[[idx for idx, _ in phased_paired_indices]]
-        y_phased_list = [label for _, label in phased_paired_indices]
-        # convert to matrix
-        X_phased = X_phased_df.to_numpy()
-        y_phased = np.array(y_phased_list)
-        
-        # train the phase refinement random forest model
-        print("Start training phasing refinement random forest model...")
-        rf_phased, _, _, _ = random_forest(X_phased, y_phased, test_size=0, random_state=random_seed, n_labels=3, \
-                                           smote=smote, tune=tune, sampling_strategy=sampling_strategy, n_jobs=n_jobs, \
-                                           n_estimators=n_estimators, max_depth=max_depth, min_samples_split=min_samples_split)
-        # save the model
+        # saved path
         if save_models:
             model_dir = os.path.join(output_dir, "models")
             check_dir(model_dir)
-            rf_phased_file = os.path.join(model_dir, sample_name+"_rf_phased_model.joblib")
-            dump(rf_phased, rf_phased_file)
-            # save the feature names
-            phased_feature_names = X_phased_df.columns.tolist()
-            rf_phased_feature_names_file = os.path.join(model_dir, sample_name+"_rf_phased_feature_names.joblib")
-            dump(phased_feature_names, rf_phased_feature_names_file)
-            print("Save the phase refinement random forest model")
-        # plots
+            print(f"Save the trained models to {model_dir}")
         if plot:
             plot_dir = os.path.join(output_dir, "plots")
             check_dir(plot_dir)
             pca_data_dir = os.path.join(output_dir, "pca_data")
             check_dir(pca_data_dir)
-            # plot the feature importance
-            sorted_features_phased = feature_importamce_plot(rf_phased, X_phased_df, plot_dir, sample_name, \
-                                                    title_note=" of Phasing Refinement", file_note="_phase")
-            # perform PCA and plot
-            pca_phased, top_features_phased, pca_phased_train_data = PCA_train(sorted_features_phased, X_phased_df, y_phased, plot_dir, sample_name, \
-                                                title_note=" of Phasing Refinement", file_note="_phase", n_features=n_features, fig_size=6, \
-                                                annotate_mosaic=annotate_mosaic, annotate_outlier=annotate_outlier)
-            # save pca data
-            pca_phased_train_file = os.path.join(pca_data_dir, sample_name+"_pca_phased_train_data.csv")
-            pca_phased_train_data.to_csv(pca_phased_train_file, sep='\t', index=True, header=True)
-            # save pca model
+            print(f"Save the plots to {plot_dir}")
+            print(f"Save the PCA data to {pca_data_dir}")
+        # ====================================================================
+        # Phase Refinement Model
+        # ====================================================================
+        if phase_refine:
+            # pair each index with its label
+            phased_paired_indices = [(index, "mosaic") for index in phased_true_index] + \
+                                    [(index, "artifact") for index in artifact_index] + \
+                                    [(index, "het") for index in het_index]
+            # shuffle the list to mix indices of different labels
+            random.seed(random_seed)
+            random.shuffle(phased_paired_indices)
+            # generate training data
+            X_phased_df = df.loc[[idx for idx, _ in phased_paired_indices]]
+            y_phased_list = [label for _, label in phased_paired_indices]
+            # convert to matrix
+            X_phased = X_phased_df.to_numpy()
+            y_phased = np.array(y_phased_list)
+            
+            # train the phase refinement random forest model
+            print("Start training phasing refinement random forest model...")
+            rf_phased, _, _, _ = random_forest(X_phased, y_phased, test_size=0, random_state=random_seed, n_labels=3, \
+                                            smote=smote, tune=tune, sampling_strategy=sampling_strategy, n_jobs=n_jobs, \
+                                            n_estimators=n_estimators, max_depth=max_depth, min_samples_split=min_samples_split)
+            # save the model
             if save_models:
-                pca_phased_file = os.path.join(model_dir, sample_name+"_pca_phased_model.pkl")
-                with open(pca_phased_file, 'wb') as file:
-                    pickle.dump(pca_phased, file)
-        #  add the labels to the data frame
-        X_phased_df['evaluation'] = y_phased
+                rf_phased_file = os.path.join(model_dir, sample_name+"_rf_phased_model.joblib")
+                dump(rf_phased, rf_phased_file)
+                # save the feature names
+                phased_feature_names = X_phased_df.columns.tolist()
+                rf_phased_feature_names_file = os.path.join(model_dir, sample_name+"_rf_phased_feature_names.joblib")
+                dump(phased_feature_names, rf_phased_feature_names_file)
+                print("Save the phase refinement random forest model")
+            # plots
+            if plot:
+                # plot the feature importance
+                sorted_features_phased = feature_importamce_plot(rf_phased, X_phased_df, plot_dir, sample_name, \
+                                                        title_note=" of Phasing Refinement", file_note="_phase")
+                # perform PCA and plot
+                pca_phased, top_features_phased, pca_phased_train_data = PCA_train(sorted_features_phased, X_phased_df, y_phased, plot_dir, sample_name, \
+                                                    title_note=" of Phasing Refinement", file_note="_phase", n_features=n_features, fig_size=6, \
+                                                    annotate_mosaic=annotate_mosaic, annotate_outlier=annotate_outlier)
+                # save pca data
+                pca_phased_train_file = os.path.join(pca_data_dir, sample_name+"_pca_phased_train_data.csv")
+                pca_phased_train_data.to_csv(pca_phased_train_file, sep='\t', index=True, header=True)
+                # save pca model
+                if save_models:
+                    pca_phased_file = os.path.join(model_dir, sample_name+"_pca_phased_model.pkl")
+                    with open(pca_phased_file, 'wb') as file:
+                        pickle.dump(pca_phased, file)
+            #  add the labels to the data frame
+            X_phased_df['evaluation'] = y_phased
 
         # ====================================================================
         # Logistic Regression Model For Het
@@ -438,8 +543,58 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         else:
             no_het_lr_model = True
 
+        # # ====================================================================
+        # # Mutaion Classification Random Forest Model
+        # # ====================================================================
+        # # pair each index with its label
+        # nohet_paired_indices = [(index, "mosaic") for index in true_sites] + \
+        #                         [(index, "artifact") for index in artifact_index]
+        # # shuffle the list to mix indices of different labels
+        # random.seed(random_seed)
+        # random.shuffle(nohet_paired_indices)
+        # # generate training data
+        # X_nohet_df = df_nophase.loc[[idx for idx, _ in nohet_paired_indices]]
+        # y_nohet_list = [label for _, label in nohet_paired_indices]
+        # # convert to matrix
+        # X_nohet = X_nohet_df.to_numpy()
+        # y_nohet = np.array(y_nohet_list)
+
+        # # train the mutation classification random forest model
+        # print("Start training somatic mutation classification random forest model...")
+        # rf, _, _, _ = random_forest(X_nohet, y_nohet, test_size=0, random_state=random_seed, n_labels=2, \
+        #                             smote=smote, tune=tune, sampling_strategy=sampling_strategy, n_jobs=n_jobs, \
+        #                             n_estimators=n_estimators, max_depth=max_depth, min_samples_split=min_samples_split)
+        # # save the model
+        # if save_models:
+        #     rf_model_file = os.path.join(model_dir, sample_name+"_rf_model.joblib")
+        #     dump(rf, rf_model_file)
+        #     # save the feature names
+        #     nohet_feature_names = X_nohet_df.columns.tolist()
+        #     rf_feature_names_file = os.path.join(model_dir, sample_name+"_rf_feature_names.joblib")
+        #     dump(nohet_feature_names, rf_feature_names_file)
+        #     print("Save the somatic mutation classification random forest model")
+        # # plots
+        # if plot:
+        #     # plot the feature importance
+        #     sorted_features_nohet = feature_importamce_plot(rf, X_nohet_df, plot_dir, sample_name, 
+        #                             title_note=" of Mutation Classification", file_note="_mutation")
+        #     # perform PCA and plot
+        #     pca_nohet, top_features_nohet, pca_nohet_train_data = PCA_train(sorted_features_nohet, X_nohet_df, y_nohet, plot_dir, sample_name, \
+        #                                     title_note=" of Mutation Classification", file_note="_mutation", n_features=n_features, \
+        #                                     fig_size=6, annotate_mosaic=annotate_mosaic, annotate_outlier=annotate_outlier)
+        #     # save pca data
+        #     pca_nohet_train_file = os.path.join(pca_data_dir, sample_name+"_pca_nohet_train_data.csv")
+        #     pca_nohet_train_data.to_csv(pca_nohet_train_file, sep='\t', index=True, header=True)
+        #     # save pca model
+        #     if save_models:
+        #         pca_nohet_file = os.path.join(model_dir, sample_name+"_pca_nohet_model.pkl")
+        #         with open(pca_nohet_file, 'wb') as file:
+        #             pickle.dump(pca_nohet, file)
+        # #  add the labels to the data frame
+        # X_nohet_df['evaluation'] = y_nohet          
+
         # ====================================================================
-        # Mutaion Classification Random Forest Model
+        # Mutaion Classification using Logistic Regression Model or Random Forest Model
         # ====================================================================
         # pair each index with its label
         nohet_paired_indices = [(index, "mosaic") for index in true_sites] + \
@@ -454,25 +609,50 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         X_nohet = X_nohet_df.to_numpy()
         y_nohet = np.array(y_nohet_list)
 
-        # train the mutation classification random forest model
-        print("Start training somatic mutation classification random forest model...")
-        rf, _, _, _ = random_forest(X_nohet, y_nohet, test_size=0, random_state=random_seed, n_labels=2, \
-                                    smote=smote, tune=tune, sampling_strategy=sampling_strategy, n_jobs=n_jobs, \
-                                    n_estimators=n_estimators, max_depth=max_depth, min_samples_split=min_samples_split)
-        # save the model
-        if save_models:
-            rf_model_file = os.path.join(model_dir, sample_name+"_rf_model.joblib")
-            dump(rf, rf_model_file)
-            # save the feature names
-            nohet_feature_names = X_nohet_df.columns.tolist()
-            rf_feature_names_file = os.path.join(model_dir, sample_name+"_rf_feature_names.joblib")
-            dump(nohet_feature_names, rf_feature_names_file)
-            print("Save the somatic mutation classification random forest model")
+        # choose models
+        if use_lr:
+            # train the logistic regression model to do mutation classification for the not-het sites
+            print("Start training somatic mutation classification logistic regression model...")
+            lr_nohet_model = logistic_regression(X_nohet, y_nohet, test_size=0, random_state=random_seed, 
+                                                 penalty='l1', solver='liblinear', k_neighbors=3, smote=False, \
+                                                 sampling_strategy=sampling_strategy, n_jobs=n_jobs)
+            # get the non-zero coefficients
+            lr_nohet_model_coef = lr_nohet_model.coef_[0]
+            lr_nohet_model_features = X_nohet_df.columns[lr_nohet_model_coef != 0]
+            # save the model
+            if save_models:
+                lr_nohet_model_file = os.path.join(model_dir, sample_name+"_lr_nohet_model.joblib")
+                dump(lr_nohet_model, lr_nohet_model_file)
+                # save the feature names
+                nohet_feature_names = lr_nohet_model_features.tolist()
+                lr_nohet_feature_names_file = os.path.join(model_dir, sample_name+"_lr_nohet_feature_names.joblib")
+                dump(nohet_feature_names, lr_nohet_feature_names_file)
+                print("Save the somatic mutation classification logistic regression model")
+        else:
+            # train the mutation classification random forest model
+            print("Start training somatic mutation classification random forest model...")
+            rf, _, _, _ = random_forest(X_nohet, y_nohet, test_size=0, random_state=random_seed, n_labels=2, \
+                                        smote=smote, tune=tune, sampling_strategy=sampling_strategy, n_jobs=n_jobs, \
+                                        n_estimators=n_estimators, max_depth=max_depth, min_samples_split=min_samples_split)
+            # save the model
+            if save_models:
+                rf_model_file = os.path.join(model_dir, sample_name+"_rf_model.joblib")
+                dump(rf, rf_model_file)
+                # save the feature names
+                nohet_feature_names = X_nohet_df.columns.tolist()
+                rf_feature_names_file = os.path.join(model_dir, sample_name+"_rf_feature_names.joblib")
+                dump(nohet_feature_names, rf_feature_names_file)
+                print("Save the somatic mutation classification random forest model")
         # plots
         if plot:
-            # plot the feature importance
-            sorted_features_nohet = feature_importamce_plot(rf, X_nohet_df, plot_dir, sample_name, 
+            if use_lr:
+                # plot the feature importance for logistic regression
+                sorted_features_nohet = lr_model_feature_importance_plot(lr_nohet_model, X_nohet_df, plot_dir, sample_name, 
                                     title_note=" of Mutation Classification", file_note="_mutation")
+            else:
+                # plot the feature importance
+                sorted_features_nohet = feature_importamce_plot(rf, X_nohet_df, plot_dir, sample_name, 
+                                        title_note=" of Mutation Classification", file_note="_mutation")
             # perform PCA and plot
             pca_nohet, top_features_nohet, pca_nohet_train_data = PCA_train(sorted_features_nohet, X_nohet_df, y_nohet, plot_dir, sample_name, \
                                             title_note=" of Mutation Classification", file_note="_mutation", n_features=n_features, \
@@ -489,32 +669,52 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         X_nohet_df['evaluation'] = y_nohet          
 
     else:
-        # get the model files
         print(f"Load the saved trained models for {model_name}")
-        rf_phased_file = os.path.join(model_dir, model_name+"_rf_phased_model.joblib")
+        if phase_refine:
+            # get the model files
+            rf_phased_file = os.path.join(model_dir, model_name+"_rf_phased_model.joblib")
+            rf_phased_feature_names_file = os.path.join(model_dir, model_name+"_rf_phased_feature_names.joblib")
+            # load the trained models
+            rf_phased = load(rf_phased_file)
+            phased_feature_names = load(rf_phased_feature_names_file)
+            if plot:
+                # get the pca model files
+                pca_phased_file = os.path.join(model_dir, model_name+"_pca_phased_model.pkl")
+                # load pca models
+                with open(pca_phased_file, 'rb') as file:
+                    pca_phased = pickle.load(file)
+        # get the model files
         lr_model_file = os.path.join(model_dir, model_name+"_lr_model.joblib")
-        rf_model_file = os.path.join(model_dir, model_name+"_rf_model.joblib")
-        rf_phased_feature_names_file = os.path.join(model_dir, model_name+"_rf_phased_feature_names.joblib")
-        rf_feature_names_file = os.path.join(model_dir, model_name+"_rf_feature_names.joblib")
+        if use_lr:
+            lr_nohet_model_file = os.path.join(model_dir, model_name+"_lr_nohet_model.joblib")
+            lr_nohet_feature_names_file = os.path.join(model_dir, model_name+"_lr_nohet_feature_names.joblib")
+        else:
+            rf_model_file = os.path.join(model_dir, model_name+"_rf_model.joblib")
+            rf_feature_names_file = os.path.join(model_dir, model_name+"_rf_feature_names.joblib")
         # load the trained models
-        rf_phased = load(rf_phased_file)
         if os.path.exists(lr_model_file):
             lr_model = load(lr_model_file)
             no_het_lr_model = False
         else:
             no_het_lr_model = True
-        rf = load(rf_model_file)
-        phased_feature_names = load(rf_phased_feature_names_file)
-        nohet_feature_names = load(rf_feature_names_file)
+        if use_lr:
+            lr_nohet_model = load(lr_nohet_model_file)
+            nohet_feature_names = load(lr_nohet_feature_names_file)
+        else:
+            rf = load(rf_model_file)
+            nohet_feature_names = load(rf_feature_names_file)
         if plot:
             # get the pca model files
-            pca_phased_file = os.path.join(model_dir, model_name+"_pca_phased_model.pkl")
             pca_nohet_file = os.path.join(model_dir, model_name+"_pca_nohet_model.pkl")
             # load pca models
-            with open(pca_phased_file, 'rb') as file:
-                pca_phased = pickle.load(file)
             with open(pca_nohet_file, 'rb') as file:
                 pca_nohet = pickle.load(file)
+
+    # create the folder to save SHAP values
+    if save_shap and not use_lr:
+        explainer = shap.TreeExplainer(rf)
+        SHAP_data_dir = os.path.join(output_dir, "SHAP_values")
+        check_dir(SHAP_data_dir)
         
 
     # ====================================================================
@@ -523,22 +723,43 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     # hard filter some criteria
     if hard_filter:
         filter_df = df.copy()
-        filter_df = filter_df[filter_df['alt_UMI_consistence_prop'] >= 0.8]
+        filter_df["identifier"] = filter_df.index
+        filter_df = pd.merge(df, keep_p_values_df, on="identifier", how="left")
+        filter_df.set_index("identifier",inplace=True)
+
+        filter_df = filter_df[filter_df['alt_UMI_avg_consistence'] >= 0.8]  # updated from "alt_UMI_consistence_prop"
         filter_df = filter_df[filter_df['alt_mismatches_mean'] <= 1.5]
-        filter_df = filter_df[filter_df['alt_read_number_perUMI_max'] >= 2]
-        filter_df = filter_df[filter_df['cause_ploy_alt'] == 0]
+        filter_df = filter_df[filter_df['ref_mismatches_mean'] <= 1.5]
+        filter_df = filter_df[~((filter_df['alt_mismatches_mean'] > 0.9) & 
+                                (filter_df['mismatches_p']  < -2)) ]
+        # filter_df = filter_df[filter_df['alt_read_number_perUMI_max'] >= 2]
+        # filter_df = filter_df[filter_df['cause_ploy_alt'] == 0]
+        filter_df = filter_df[filter_df['alt_querypos_num'] > 1]
         filter_df = filter_df[filter_df['alt_multi_map_prop'] <= 0.2]
         # filter_df = filter_df[filter_df['sf_test_sig'] == 1]
-        filter_df = filter_df[filter_df['mutant_rate'] <= 0.5]
-        filter_df = filter_df[(filter_df['median_distance_to_end_remove_clip'] >= 0.05) &
-                              (filter_df['median_distance_to_end_remove_clip'] <= 0.95)]
+        filter_df = filter_df[filter_df['mut_spots_prop_by_probablity'] <= 0.5] # updated from "mut_rate_prob"
+        filter_df = filter_df[((filter_df['per_alt_UMI_end_remove_clip_median'] >= 0.05) &
+                                 (filter_df['per_alt_UMI_end_remove_clip_median'] <= 0.95))]
+
+        filter_df = filter_df[~(((filter_df['per_alt_UMI_end_remove_clip_median'] < 0.1) |
+                                 (filter_df['per_alt_UMI_end_remove_clip_median'] > 0.9)  ) & 
+                                (filter_df['per_UMI_end_remove_clip_p'] < -2))]
+        # filter_df = filter_df[~(((filter_df['per_alt_UMI_end_remove_clip_median'] < 0.1) |
+        #                       (filter_df['per_alt_UMI_end_remove_clip_median'] > 0.9)) &
+        #                       (filter_df['per_UMI_end_remove_clip_p'] < -2))]
+
+        # filter_df = filter_df[~(((filter_df['per_alt_UMI_end_value_median'] < 10 ) | (filter_df['per_alt_UMI_end_value_median'] > 110)) & 
+        #             (filter_df['per_UMI_end_remove_clip_p'] < -2))]
+
+        print("filter_df",filter_df.shape)
 
         filter_set = set(filter_df.index)
         phased_notpassfilter_set = candidate_phased_set - filter_set
         unphased_notpassfilter_set = candidate_unphsed_set - filter_set
         # phased_notpassfilter_index = df.index.intersection(phased_notpassfilter_set)
         # unphased_notpassfilter_index = df.index.intersection(unphased_notpassfilter_set)
-
+        print("unphased_notpassfilter_set",len(unphased_notpassfilter_set))
+        
     # predict the phsed haplotype=3 sites
     if len(candidate_phased_index) > 0:
         pred_phase = True
@@ -555,11 +776,31 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
             # using random forest model for non-phased sites
             candidate_phased_df = df_nophase.loc[candidate_phased_index]
             candidate_phased = candidate_phased_df.to_numpy()
-            candidate_phased_pred = rf.predict(candidate_phased)
+            if use_lr:
+                candidate_phased_pred = lr_nohet_model.predict(candidate_phased)
+            else:
+                candidate_phased_pred = rf.predict(candidate_phased)
             # get the number of each values
             phsed_pred_counts = Counter(candidate_phased_pred)
             print("Phased set somatic mutation prediction result:")
             print(phsed_pred_counts)
+            # calculate and save the SHAP values
+            if save_shap and not use_lr:
+                # calculate SHAP values
+                shap_values_phased = explainer.shap_values(candidate_phased)
+                # find the index of mosaic
+                mosaic_class_index_phased = list(rf.classes_).index("mosaic")
+                mosaic_shap_values_phased = shap_values_phased[:, :, mosaic_class_index_phased]
+                # save SHAP values and expected values to a CSV file
+                shap_phased_df = pd.DataFrame(mosaic_shap_values_phased, columns=candidate_phased_df.columns, index=candidate_phased_df.index)
+                shap_values_phased_file = os.path.join(SHAP_data_dir, sample_name+"_shap_values_phased.csv")
+                shap_phased_df.to_csv(shap_values_phased_file, sep='\t', index=True, header=True)
+                # save the expected value for SHAP
+                shap_expected_values_phased_file = os.path.join(SHAP_data_dir, sample_name+"_shap_expected_values_phased.csv")
+                np.savetxt(shap_expected_values_phased_file, [explainer.expected_value[mosaic_class_index_phased]])
+                # save training data for further analysis
+                candidate_phased_file = os.path.join(SHAP_data_dir, sample_name+"_candidate_phased_data.csv")
+                candidate_phased_df.to_csv(candidate_phased_file, sep='\t', index=True, header=True)
 
         # get predicted true sites
         candidate_phased_df['pred'] = candidate_phased_pred
@@ -593,11 +834,14 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
 
     # predict the het sites
     # candidate_df = df.loc[candidate_index]
-    if no_het_lr_model:
+    if no_het_lr_model or not_pred_het:
         pred_nohet_barcode = candidate_unphased_index
     else:
         candidate_df = df_het_features.loc[candidate_unphased_index]
         candidate = candidate_df.to_numpy()
+        # normalize
+        scaler = StandardScaler()
+        candidate = scaler.fit_transform(candidate)
         candidate_pred = lr_model.predict(candidate)
         # get the number of each values
         pred_counts = Counter(candidate_pred)
@@ -613,11 +857,36 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     # predict the somatic mutations
     candidate_nohet_df = df_nophase.loc[pred_nohet_barcode]
     candidate_nohet = candidate_nohet_df.to_numpy()
-    candidate_nohet_pred = rf.predict(candidate_nohet)
+    if use_lr:
+        # normalize
+        scaler = StandardScaler()
+        candidate_nohet = scaler.fit_transform(candidate_nohet)
+        candidate_nohet_pred = lr_nohet_model.predict(candidate_nohet)
+    else:        
+        candidate_nohet_pred = rf.predict(candidate_nohet)
+        
+
     # get the number of each values
     nohet_pred_counts = Counter(candidate_nohet_pred)
     print("Somatic mutation classification prediction result:")
     print(nohet_pred_counts)
+    # calculate and save the SHAP values
+    if save_shap and not use_lr:
+        # calculate SHAP values
+        shap_values_nohet = explainer.shap_values(candidate_nohet)
+        # find the index of mosaic
+        mosaic_class_index_nohet = list(rf.classes_).index("mosaic")
+        mosaic_shap_values_nohet = shap_values_nohet[:, :, mosaic_class_index_nohet]
+        # save SHAP values and expected values to a CSV file
+        shap_nohet_df = pd.DataFrame(mosaic_shap_values_nohet, columns=candidate_nohet_df.columns, index=candidate_nohet_df.index)
+        shap_values_nohet_file = os.path.join(SHAP_data_dir, sample_name+"_shap_values_nohet.csv")
+        shap_nohet_df.to_csv(shap_values_nohet_file, sep='\t', index=True, header=True)
+        # save the expected value for SHAP
+        shap_expected_values_nohet_file = os.path.join(SHAP_data_dir, sample_name+"_shap_expected_values_nohet.csv")
+        np.savetxt(shap_expected_values_nohet_file, [explainer.expected_value[mosaic_class_index_nohet]])
+        # save training data for further analysis
+        candidate_nohet_file = os.path.join(SHAP_data_dir, sample_name+"_candidate_nohet_data.csv")
+        candidate_nohet_df.to_csv(candidate_nohet_file, sep='\t', index=True, header=True)
     # get predicted true sites
     candidate_nohet_df['pred'] = candidate_nohet_pred
     nohet_pred_true = candidate_nohet_df[candidate_nohet_df['pred']=="mosaic"]
@@ -633,6 +902,7 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
     # get results after hard filtering
     if hard_filter:
         nohet_notpassfilter_index = candidate_nohet_df.index.intersection(unphased_notpassfilter_set)
+        print("combine",len(filter_df.index.intersection(candidate_nohet_df.index)))
         candidate_nohet_df.loc[nohet_notpassfilter_index, 'pred'] = "artifact"
         nohet_pred_true = candidate_nohet_df[candidate_nohet_df['pred']=="mosaic"]
         nohet_pred_true_barcode = nohet_pred_true.index
@@ -642,15 +912,20 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
         with open(pred_filter_file, 'w') as file:
             for item in nohet_pred_true_barcode:
                 file.write(f"{item}\n")
+    
 
     # combine the predicted sites
     if pred_phase:
         total_pred_true_barcode = phased_pred_true_barcode.union(nohet_pred_true_barcode)
         # total_pred_true_barcode = phased_pred_true_barcode + nohet_pred_true_barcode
-        total_pred_filter_file = os.path.join(results_dir, sample_name+"_total_pred_truesites.txt")
-        with open(total_pred_filter_file, 'w') as file:
-            for item in total_pred_true_barcode:
-                file.write(f"{item}\n")
+    else:
+        total_pred_true_barcode = nohet_pred_true_barcode
+    # save the total predicted true sites
+    total_pred_filter_file = os.path.join(results_dir, sample_name+"_total_pred_truesites.txt")
+    with open(total_pred_filter_file, 'w') as file:
+        for item in total_pred_true_barcode:
+            file.write(f"{item}\n")
+    print("total_pred_true_barcode",len(total_pred_true_barcode))
 
 
     # pca scatter plot
@@ -676,15 +951,25 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
                         title_note=" of Mutation Classification", file_note="_mutation", 
                         fig_size=6, pca_train=pca_nohet, top_features=top_features_nohet)
         else:
-            # get feature importances
-            rf_phased_importances = rf_phased.feature_importances_
-            rf_importances = rf.feature_importances_
-            # sort the features and their importances
-            rf_phsed_sorted_importances, rf_phased_sorted_features = zip(*sorted(zip(rf_phased_importances, phased_feature_names), reverse=True))
-            rf_sorted_importances, rf_sorted_features = zip(*sorted(zip(rf_importances, nohet_feature_names), reverse=True))
+            if phase_refine:
+                # get feature importances
+                rf_phased_importances = rf_phased.feature_importances_
+                # sort the features and their importances
+                rf_phsed_sorted_importances, rf_phased_sorted_features = zip(*sorted(zip(rf_phased_importances, phased_feature_names), reverse=True))
+            # no het model
+            if use_lr:
+                lr_nohet_importances = np.abs(lr_nohet_model.coef_[0])
+                lr_nohet_sorted_importances, lr_nohet_sorted_features = zip(*sorted(zip(lr_nohet_importances, nohet_feature_names), reverse=True))
+            else:
+                rf_importances = rf.feature_importances_
+                rf_sorted_importances, rf_sorted_features = zip(*sorted(zip(rf_importances, nohet_feature_names), reverse=True))
             # get the top features
-            top_features_phased = list(rf_phased_sorted_features[:n_features])
-            top_features_nohet = list(rf_sorted_features[:n_features])
+            if phase_refine:
+                top_features_phased = list(rf_phased_sorted_features[:n_features])
+            if use_lr:
+                top_features_nohet = list(lr_nohet_sorted_features[:n_features])
+            else:
+                top_features_nohet = list(rf_sorted_features[:n_features])
 
             # plot PCA scatter plot
             if pred_phase and len(candidate_phased_index) > 1:
@@ -698,11 +983,12 @@ def mutation_classification(input_file, output_dir, sample_name, model_dir="./",
                         top_features=top_features_nohet)
         
         # save pca data
-        if pred_phase and len(candidate_phased_index) > 1:
-            pca_phased_pred_file = os.path.join(pca_data_dir, sample_name+"_pca_phased_pred_data.csv")
-            pca_phased_pred_data.to_csv(pca_phased_pred_file, sep='\t', index=True, header=True)
-        pca_nohet_pred_file = os.path.join(pca_data_dir, sample_name+"_pca_nohet_pred_data.csv")
-        pca_nohet_pred_data.to_csv(pca_nohet_pred_file, sep='\t', index=True, header=True)
+        if save_pca:
+            if pred_phase and len(candidate_phased_index) > 1:
+                pca_phased_pred_file = os.path.join(pca_data_dir, sample_name+"_pca_phased_pred_data.csv")
+                pca_phased_pred_data.to_csv(pca_phased_pred_file, sep='\t', index=True, header=True)
+            pca_nohet_pred_file = os.path.join(pca_data_dir, sample_name+"_pca_nohet_pred_data.csv")
+            pca_nohet_pred_data.to_csv(pca_nohet_pred_file, sep='\t', index=True, header=True)
 
 
 
@@ -936,8 +1222,8 @@ def random_forest(X, y, test_size=0.3, random_state=100, smote=True, tune="rando
 
 
 
-def logistic_regression(X, y, test_size=0.3, random_state=100, max_iter=1000, class_weight='balanced', \
-                        smote=True, k_neighbors=4, sampling_strategy="auto", n_jobs=None):
+def logistic_regression(X, y, test_size=0.3, random_state=100, penalty='l2', solver='lbfgs', max_iter=1000, \
+                        class_weight='balanced', smote=True, k_neighbors=4, sampling_strategy="auto", n_jobs=None):
     """
     Use Logistic regression method to seperate heterozygous sites from candidate sites
 
@@ -945,6 +1231,9 @@ def logistic_regression(X, y, test_size=0.3, random_state=100, max_iter=1000, cl
         X, y - the input data and labels (in the numpy format)
         test_size - the test set used when splitting the training and test set (default = 0.3)
         random_state - the random state for the train-test splitting and random forest model (default = 100)
+        penalty - the type of regularization to use (default = 'l2')
+        solver - the algorithm to use in the optimization problem (default = 'lbfgs')
+                 we would use penalty='l1', solver='liblinear' for non-het sites mutation classification
         max_iter - the maximum iteration number (default = 1000)
         class_weight - weights associated with classes (default = "balanced")
         smote - whether use SMOTE (Synthetic Minority Over-sampling Technique) to over-sample the minority class 
@@ -987,7 +1276,8 @@ def logistic_regression(X, y, test_size=0.3, random_state=100, max_iter=1000, cl
     # Train the model
     # ======================================================================
     # initialize the Logistic Regression model
-    lr_model = LogisticRegression(random_state=random_state, max_iter=max_iter, class_weight=class_weight)
+    lr_model = LogisticRegression(random_state=random_state, penalty=penalty, solver=solver,
+                                  max_iter=max_iter, class_weight=class_weight)
     # fit model with the training data
     lr_model.fit(X_train, y_train)
 
@@ -1082,6 +1372,28 @@ def logistic_regression(X, y, test_size=0.3, random_state=100, max_iter=1000, cl
 
 
 
+def lr_model_feature_importance_plot(model, df, output_dir, sample_name, title_note="", file_note="", fig_size=10):
+    """Plot the feature importance learnt from logistic regression model"""
+    # get feature importances
+    importances = np.abs(model.coef_[0])
+    feature_names = df.columns
+    # sort the features and their importances
+    sorted_importances, sorted_features = zip(*sorted(zip(importances, feature_names), reverse=True))
+    # plot feature importance bar plot
+    plt.figure(figsize=(fig_size+2, fig_size))
+    plt.title('Feature Importances' + title_note)
+    plt.barh(range(len(sorted_importances)), sorted_importances, align='center')
+    plt.yticks(range(len(sorted_importances)), sorted_features)
+    plt.xlabel('Relative Importance')
+    plt.gca().invert_yaxis()
+    plt.tight_layout()
+    fig_file = os.path.join(output_dir, sample_name+file_note+"logistic_reg_feature_importance.png")
+    plt.savefig(fig_file)
+    plt.close()
+
+    return sorted_features
+
+
 def feature_importamce_plot(model, df, output_dir, sample_name, title_note="", file_note="", fig_size=10):
     """Plot the feature importance learnt from random forest or other classification models"""
     # get feature importances
@@ -1103,6 +1415,10 @@ def feature_importamce_plot(model, df, output_dir, sample_name, title_note="", f
 
     # create a dict for feature importance
     feature_importance_dict = dict(zip(feature_names, importances))
+    # check missing values and infinite values
+    # feature_importance_dict = {k: (0 if np.isnan(v) else v) for k, v in feature_importance_dict.items()}
+    feature_importance_dict = {k: v for k, v in feature_importance_dict.items() if not np.isnan(v)}
+    feature_importance_dict = {k: v for k, v in feature_importance_dict.items() if np.isfinite(v)}
     # generate the word cloud
     wordcloud = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(feature_importance_dict)
     # plot the word cloud
@@ -1169,9 +1485,14 @@ def PCA_train(sorted_features, X_df, y, output_dir, sample_name, title_note="", 
     pca_circle_plot(pca, feature_names=X_df_features.columns, output_dir=output_dir, sample_name=sample_name, 
                     title_note=title_note, file_note=file_note, lim=0.85, figsize=9)
 
-    # create a data frame for the output
-    pca_df = pd.DataFrame(data = X_pca, columns = ['PC1', 'PC2'], index=X_df_features.index)
-    pca_df['evaluation'] = y
+    # # create a data frame for the output
+    # pca_df = pd.DataFrame(data = X_pca, columns = ['PC1', 'PC2'], index=X_df_features.index)
+    # pca_df['evaluation'] = y
+    # add PCA values to the original feature data frame
+    df = X_df.copy()
+    df['label'] = y
+    df['type'] = 'evaluation'
+    df[['PC1', 'PC2']] = X_pca
     # get the explained variance ratio
     explained_variance = pca.explained_variance_ratio_
     # calculate the distance from the origin (or centroid)
@@ -1180,7 +1501,7 @@ def PCA_train(sorted_features, X_df, y, output_dir, sample_name, title_note="", 
     threshold = np.percentile(distances, thr_outlier)
     # identify outliers
     outliers = distances > threshold
-    pca_df['outlier'] = outliers
+    df['outlier'] = outliers
 
     # PCA plot
     color_palette = {
@@ -1193,10 +1514,10 @@ def PCA_train(sorted_features, X_df, y, output_dir, sample_name, title_note="", 
     # elif n_labels==3:
     #     color_palette = ['#fe4a49', '#009fb7', '#ffd166']
     plt.figure(figsize=(fig_size+2, fig_size))
-    sns.scatterplot(data=pca_df, x='PC1', y='PC2', hue='evaluation', palette=color_palette, alpha=0.9, s=20)
+    sns.scatterplot(data=df, x='PC1', y='PC2', hue='label', palette=color_palette, alpha=0.9, s=20)
     # add site info for true mutations
-    for i, row in pca_df.iterrows():
-        if row['evaluation'] == 'mosaic' and annotate_mosaic: 
+    for i, row in df.iterrows():
+        if row['label'] == 'mosaic' and annotate_mosaic: 
             plt.annotate(row.name, 
                          (row['PC1'], row['PC2']),
                          textcoords="offset points",
@@ -1218,7 +1539,7 @@ def PCA_train(sorted_features, X_df, y, output_dir, sample_name, title_note="", 
     plt.savefig(pca_scatter_plot)
     plt.close()
 
-    return pca, top_features, pca_df
+    return pca, top_features, df
 
 
 
@@ -1310,3 +1631,96 @@ def PCA_pred(train_df, pred_df, output_dir, sample_name, title_note="", file_not
     plt.close()
 
     return combined_df
+
+
+
+
+# column names corresponding to the features in the model
+old2new_mapping = {
+    'alt_UMI_consistence_prop': 'alt_UMI_avg_consistence',
+    'alt_consistence_hard_prop': 'alt_consistent_UMI_prop_strict',
+    'alt_consistence_soft_prop': 'alt_consistent_UMI_prop_relaxed',
+    'indel_proportion_SNPonly': 'indel_proportion_for_site',
+    'alt2_proportion_consensus': 'consensus_alt2_proportion',
+    'dp': 'read_depth',
+    'dp_consensus': 'consensus_UMI_count',
+    'alt_dp': 'alt_allele_count',
+    'alt_dp_consensus': 'consensus_alt_allele_count',
+    'alt_reverse_dp': 'alt_allele_count_reverse',
+    'reverse_dp': 'read_depth_reverse',
+    'alt_forward_dp': 'alt_allele_count_forward',
+    'forward_dp': 'read_depth_forward',
+    'vaf_consensus': 'consensus_vaf',
+    'vaf_spot_mean': 'mut_spots_vaf_mean',
+    'vaf_spot_median': 'mut_spots_vaf_median',
+    'mean_AFspot': 'all_spots_vaf_mean',
+    'max_AFspot': 'all_spots_vaf_max',
+    'spotNum': 'spot_num',
+    'alt_SpotNum': 'alt_spot_num',
+    'cause_ploy_alt': 'cause_poly_alt',
+    'anno': 'variant_anno',
+    'anno_gene': 'gene_anno',
+    'geneStrand': 'gene_strand',
+    'r2': 'alt_vs_total_dp_r2',
+    'wilcoxon_p': 'alt_vs_total_dp_paired_wilcoxon_p',
+    'wilcoxon_s': 'alt_vs_total_dp_paired_wilcoxon_s',
+    'KS_p': 'mut_vs_nonmut_spots_KS_p',
+    'KS_s': 'mut_vs_nonmut_spots_KS_s',
+    'MI_p': 'mut_vs_nonmut_spots_MI_p',
+    'MI_s': 'mut_vs_nonmut_spots_MI_s',
+    'mut_rate_prob': 'mut_spots_prop_by_probablity',
+    'mut_rate_likelihood': 'mut_spots_prop_by_likelihood',
+    'mut_rate_vaf': 'mut_spots_prop_by_vaf',
+    'sf_test_sig': 'pass_spatial_test'
+}
+
+
+new2old_mapping = {
+    'alt_UMI_avg_consistence': 'alt_UMI_consistence_prop',
+    'alt_consistent_UMI_prop_strict': 'alt_consistence_hard_prop',
+    'alt_consistent_UMI_prop_relaxed': 'alt_consistence_soft_prop',
+    'indel_proportion_for_site': 'indel_proportion_SNPonly',
+    'consensus_alt2_proportion': 'alt2_proportion_consensus',
+    'read_depth': 'dp',
+    'consensus_UMI_count': 'dp_consensus',
+    'alt_allele_count': 'alt_dp',
+    'consensus_alt_allele_count': 'alt_dp_consensus',
+    'alt_allele_count_reverse': 'alt_reverse_dp',
+    'read_depth_reverse': 'reverse_dp',
+    'alt_allele_count_forward': 'alt_forward_dp',
+    'read_depth_forward': 'forward_dp',
+    'consensus_vaf': 'vaf_consensus',
+    'mut_spots_vaf_mean': 'vaf_spot_mean',
+    'mut_spots_vaf_median': 'vaf_spot_median',
+    'all_spots_vaf_mean': 'mean_AFspot',
+    'all_spots_vaf_max': 'max_AFspot',
+    'spot_num': 'spotNum',
+    'alt_spot_num': 'alt_SpotNum',
+    'cause_poly_alt': 'cause_ploy_alt',
+    'variant_anno': 'anno',
+    'gene_anno': 'anno_gene',
+    'gene_strand': 'geneStrand',
+    'alt_vs_total_dp_r2': 'r2',
+    'alt_vs_total_dp_paired_wilcoxon_p': 'wilcoxon_p',
+    'alt_vs_total_dp_paired_wilcoxon_s': 'wilcoxon_s',
+    'mut_vs_nonmut_spots_KS_p': 'KS_p',
+    'mut_vs_nonmut_spots_KS_s': 'KS_s',
+    'mut_vs_nonmut_spots_MI_p': 'MI_p',
+    'mut_vs_nonmut_spots_MI_s': 'MI_s',
+    'mut_spots_prop_by_probablity': 'mut_rate_prob',
+    'mut_spots_prop_by_likelihood': 'mut_rate_likelihood',
+    'mut_spots_prop_by_vaf': 'mut_rate_vaf',
+    'pass_spatial_test': 'sf_test_sig'
+}
+
+
+
+
+# function to rename columns based on the mapping
+def rename_columns(df, name_mapping):
+    for col in df.columns:
+        if col in name_mapping:
+            # check if the new name is different, and if so, rename the column
+            if col != name_mapping[col]:
+                df = df.rename(columns={col: name_mapping[col]})
+    return df

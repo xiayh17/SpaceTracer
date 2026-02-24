@@ -1,0 +1,48 @@
+Config file config.txt is extended by additional config specified via the command line.
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 2
+Rules claiming more threads will be scaled down.
+Job stats:
+job                   count
+------------------  -------
+all                       1
+cellnum                   1
+combine_umi_counts        1
+filter                    1
+genotyper                 1
+get_features              1
+mpileup                   1
+pred                      1
+prior                     1
+split_bam                 1
+total                    10
+
+Select jobs to execute...
+
+[Tue Feb 24 23:04:03 2026]
+rule split_bam:
+    input: /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/possorted_genome_bam.bam
+    output: demo/bam_filter/demo_barcode.txt, demo/bam_filter/IN.bam
+    jobid: 4
+    reason: Updated input files: /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/possorted_genome_bam.bam, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Tue Feb 24 23:04:20 2026]
+Error in rule split_bam:
+    jobid: 4
+    input: /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/possorted_genome_bam.bam
+    output: demo/bam_filter/demo_barcode.txt, demo/bam_filter/IN.bam
+    shell:
+        
+        sed 's/,/\t/g' /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv | sed '1d' | awk '{if ($2==0) print $1, "OUT"; else print $1, "IN"}' OFS="\t" > demo/bam_filter/demo_barcode.txt
+        sinto filterbarcodes -b /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/possorted_genome_bam.bam -c demo/bam_filter/demo_barcode.txt --barcodetag "CB" --outdir demo/bam_filter -p 4
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Removing output files of failed job split_bam since they might be corrupted:
+demo/bam_filter/demo_barcode.txt, demo/bam_filter/IN.bam
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: ../.snakemake/log/2026-02-24T230357.188000.snakemake.log

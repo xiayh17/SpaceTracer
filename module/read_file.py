@@ -371,7 +371,7 @@ def get_freq_for_mutation_simple_from_annovar(gnomad, identifier):
     identifier:"chr1_1000_A_alt"
     '''
     identifier_list=identifier.split("_")
-    #print(identifier_list)
+    # print(identifier_list)
     chr=identifier_list[0]
     pos=int(identifier_list[1])
     ref=identifier_list[2]

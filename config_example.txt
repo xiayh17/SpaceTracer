@@ -1,0 +1,22 @@
+sample: "demo"
+threads: 1
+readLen: 120
+spacerangerResult: "demo_input/Spaceranger_result"  #absolute path
+srcPath: ${SpaceTracer_path}
+GENOME_FA: "Resources/genome.fa"
+gff3_file: "Resources/wgEncodeGencodeExonSupportV44.sort.bed"
+mappbablity_file: "Resources/k24.umap.bedgraph"
+prior_file: "demo_input/demo.prior.out" # use your personal prior file
+error_profile: "demo_input/lysis_errors.SigProfile.txt"
+gnomad_list: "" # if prior_file is provided, gnomad_list is not required
+savePATH: "output/"
+SPECIES: "human"
+gender: "male"  
+gtexGene: "Resources/gtexGene.txt"
+reference_error_SigProfile: "Resources/split_3_lysis_errors.SigProfile.txt"
+cluster: "demo_input/demo_cluster.txt" ## you can provide personal cluster result. If not, we would run cluster automaticly
+h5ad_file: "demo_input/demo_results.h5ad" ## you can provide personal cluster result. If not, we would run cluster automaticly
+PON_file: "Resources/PON_33samples.txt"
+dbSNP: "Resources/Homo_sapiens_assembly38.dbsnp138.vcf"
+RNA_editing_path: "Resources/RNA_editing.bed"
+imprinted_genes_bed: "imprinted_genes.region.bed"

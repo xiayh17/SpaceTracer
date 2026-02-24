@@ -1,5 +1,6 @@
 from collections import defaultdict, Counter
 from functools import partial
+import gc
 import multiprocessing
 import os
 # import re
@@ -10,6 +11,7 @@ import warnings
 # from tabnanny import check
 # import time
 # from pyfaidx import Fasta
+import pandas as pd
 import pysam
 import argparse
 import scipy.stats
@@ -20,8 +22,19 @@ from pybedtools import BedTool
 from math import log10,ceil
 from functools import reduce
 from module.UMI_combine import calculate_UMI_combine_phred,get_most_candidate_allele,handle_cigar,handle_seq,handle_pos,handle_quality_matrix,UMI_combination_spot
-from utils import get_chr_size
+from utils import get_chr_size, round_to_nearest_bin
 # from utils import check_dir
+import psutil
+
+# from memory_profiler import memory_usage
+# from memory_profiler import profile
+
+
+    
+# def print_memory_usage(note=""):
+#     process = psutil.Process(os.getpid())
+#     mem = process.memory_info().rss / 1024 / 1024  # 单位MB
+#     print(f"[内存监控] {note} 当前内存: {mem:.2f} MB")
 
 
 def handel_candidate_informative_SNP_site(species,germline_file_name, tmp_dir):
@@ -46,15 +59,16 @@ def handel_candidate_informative_SNP_site(species,germline_file_name, tmp_dir):
     if species=="human":
         run_shell="awk -F'\t' '$3 == \"het\" {split($4, allele, \",\");split($5, allele_count, \",\");if (allele_count[1] > 20 && allele_count[2] > 20) " \
                     "{split($6, prior, \",\");if (prior[1] > 0.01 && prior[2] > 0.01) " \
-                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s |sort -u> %s" \
+                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s > %s" \
                     "" % (germline_file_name, site_bed_file)
     else:
         run_shell="awk -F'\t' '$3 == \"het\" {split($4, allele, \",\");split($5, allele_count, \",\");if (allele_count[1] > 20 && allele_count[2] > 20) " \
                     "{split($6, prior, \",\");if (prior[1] > 0 && prior[2] > 0) " \
-                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s |sort -u> %s" \
+                    "{total = allele_count[1] + allele_count[2];if (total > 50) {print $1, $2, $2,$3,allele[1], allele[2], $5,$6;}}}}' OFS=\"\\t\" %s > %s" \
                     "" % (germline_file_name, site_bed_file)
 
     result=subprocess.run(run_shell,shell=True)
+    # print_memory_usage("line70")
     if result.returncode!=0:
         print(f'Something wrong when generate the filtered bed file for {germline_file_name}.')
     
@@ -68,8 +82,10 @@ def short_bed_file(gene_review_file, site_bed_file, tmp_dir):
     tmp=str(uuid.uuid4())
 
     short_gene_review_file=os.path.join(tmp_dir,os.path.basename(gene_review_file)+tmp+".tmp.short.genereview.bed")
-    result=subprocess.run("bedtools intersect -a %s -b %s -u | grep -v \"MT-\" |sort -u> %s" % \
+    result=subprocess.run("bedtools intersect -a %s -b %s -u | grep -v \"MT-\" > %s" % \
                           (gene_review_file, site_bed_file, short_gene_review_file),shell=True)
+    # print_memory_usage("line85")
+    
     if result.returncode!=0:
         print(f'Something wrong when generate the shorted gene review file for {gene_review_file}.')
 
@@ -92,9 +108,11 @@ def short_gencode_file(gencode_file,site_bed_file,tmp_dir,rerun=True):
     
 
     result=subprocess.run(run_shell,shell=True)
+    # print_memory_usage("line109")
+
     if result.returncode!=0:
-        raise TypeError(f'Something wrong when generate the shorted gene review file for {short_gencode_file_name}.')
-        
+        print(f'Something wrong when generate the shorted gene review file for {short_gencode_file_name}.')
+        sys.exit()
     return short_gencode_file_name
 
 
@@ -117,6 +135,10 @@ def handle_genereview_file(review_file,chrom_colum=1,pos_start=2,pos_end=3,gene_
 
 
 def short_mosaic_sites_and_combine_with_germ(ind_geno_file, germ_bed_file, tmp_dir):
+    """
+    ind_geno_file:
+        #chrom	site	ID	germline	mutant	cluster	spot_number	consensus_read_count	genotype	p_mosaic	Gi	vaf
+    """
     tmp=str(uuid.uuid4())
 
     short_ind_file=os.path.join(tmp_dir,os.path.basename(ind_geno_file)+tmp+".tmp.short.mosaic.bed")
@@ -125,13 +147,113 @@ def short_mosaic_sites_and_combine_with_germ(ind_geno_file, germ_bed_file, tmp_d
     #                       "" % (ind_geno_file,short_ind_file,short_ind_file, germ_bed_file,combine_ind_germ_file),shell=True)
     result1=subprocess.run("awk '$9=\"mosaic\"{print $1, $2, $2,$9, $4,$5, $12, \"NA\"}' OFS=\"\t\" %s > %s; cat %s %s > %s" \
                           "" % (ind_geno_file,short_ind_file,short_ind_file, germ_bed_file,combine_ind_germ_file),shell=True)
+    # print_memory_usage("line147")
 
     if result1.returncode != 0:
         print(result1.stderr)
 
     return short_ind_file, combine_ind_germ_file
 
-      
+
+### This four function are used to get right quality and base from pysam 
+##  not used!!!!!!!!!!!
+def get_geno_from_alignment(pos,item,CBtag,UBtag):
+    def handle_cigar(ciagr_symbol):
+        '''
+        ## handel cigar
+        # [(0, 76), (2, 1), (0, 33), (3, 139241), (0, 11)]
+        # '76M1D33M139241N11M'
+        # the 1st is symbol; and the 2nd is count
+        # 0: Match; 1: Insertion; 2: deletion; 3: N; 4: S; 5: H; 6: P; 7: =; 8: X
+        '''
+        seq_length_before = 0
+        pos_length_before = 0
+
+        seq_cut_start = None; seq_cut_end = None
+        pos_cut=[]
+        for cigars, i in zip(ciagr_symbol,range(1,len(ciagr_symbol)+1)):
+            symbol = cigars[0]
+            count = cigars[1]
+            if symbol in [5,6,7,8]:
+                # an api for handeling mapping issues "HP=X"
+                print(ciagr_symbol)  ## LOG
+            elif symbol in [0, 1, 4]:
+                # measure the seq length 
+                seq_length_before += count
+                if symbol == 0:
+                    pos_length_before += count
+                elif symbol == 4:
+                    # whether "S" is in this read
+                    if i == 1:
+                        # whether the "S" is in the head or tail
+                        seq_cut_start = seq_length_before
+                    elif i ==len(ciagr_symbol):
+                        seq_cut_end = seq_length_before
+                    else:
+                        print(ciagr_symbol) ## LOG
+                elif symbol == 1:
+                    # whether the "I" is in the cigar
+                    pos_cut.append((pos_length_before,count))
+            else:
+                pass
+        seq_cut = (seq_cut_start, seq_cut_end)
+        return seq_cut, pos_cut
+
+    def handle_seq(seq, seq_cut):
+        # only support one time for cut
+        cut_seq=seq[seq_cut[0]:seq_cut[1]]
+        return cut_seq
+
+    def handle_pos(pos_matrix,pos_cut):
+        if len(pos_cut) == 0:
+            cut_pos_matrix = pos_matrix
+        elif len(pos_cut) == 1:
+            times = pos_cut[0][1]
+            pos = pos_cut[0][0]
+            cut_pos_matrix = pos_matrix[0:pos] + [""] * times + pos_matrix[pos:]
+        else:
+            start = 0
+            cut_pos_matrix = []
+            for item in range(len(pos_cut)):
+                pos = pos_cut[item][0]; times = pos_cut[item][1]
+                cut_pos_matrix = cut_pos_matrix + pos_matrix[start:pos] + [""] * times
+                start=pos
+                #print(cut_pos_matrix)
+            last_pos = pos_cut[-1][0]
+            cut_pos_matrix = cut_pos_matrix + pos_matrix[last_pos:]
+        return cut_pos_matrix
+
+    def handle_quality_matrix(mutation_in_cutseq_index,seq,cut_seq):
+        if len(cut_seq[mutation_in_cutseq_index:]) >= len(cut_seq[:mutation_in_cutseq_index]):
+            query_str = cut_seq[mutation_in_cutseq_index:]
+            raw_index = seq.index(query_str)
+        else:
+            query_str = cut_seq[:mutation_in_cutseq_index]
+            raw_index = seq.index(query_str) + len(query_str)
+        return raw_index
+
+    Name,geno,quality='','',''
+    
+    try:
+        CB=item.get_tag(CBtag).strip()
+        UB=item.get_tag(UBtag).strip()
+        Name=CB+"_"+UB
+        pos_index=pos-1
+
+        seq_cut, pos_cut = handle_cigar(item.cigar)
+        cut_seq=handle_seq(item.seq, seq_cut)
+        cut_pos=handle_pos(item.get_reference_positions(), pos_cut)
+        raw_index = handle_quality_matrix(cut_pos.index(pos_index),item.seq,cut_seq)
+        quality=item.get_forward_qualities()[raw_index]
+
+        if pos_index in cut_pos:
+            # effective_DP += 1
+            geno = cut_seq[cut_pos.index(pos_index)]            
+    except:
+        pass
+
+    return Name,geno,quality
+        
 # util
 def check_dir(dir):
     if os.path.exists(dir):
@@ -169,6 +291,27 @@ def handle_pos_bed(bed_file):
             mutation_identifier_list.append(mutation)
     
     return mutation_identifier_list
+
+
+# def read_ind_genotype(result_file):
+#     '''
+#     input:
+#     chr1    14623   C       A,<*>
+#     chr1    14653   C       T,<*>
+    
+#     output:
+#     list: [("chrX", "119811135", "T", "C,<*>"),...]
+#     '''
+#     mutation_identifier_list=[]
+#     f=open(result_file,"r")
+#     for line in f.readlines():
+#         if line[0]!="#":
+#             s=line.strip().split()
+#             chrom=s[0];pos=s[1];germline=s[15];mutation=s[16]
+#             mutation="_".join([str(chrom),str(pos),str(germline),str(mutation)])
+#             mutation_identifier_list.append(mutation)
+    
+#     return mutation_identifier_list
 
 
 def filter_geno_dict(count_result, scale_ratio=5):
@@ -438,8 +581,7 @@ def judge_origin(germline, annotated_type,detail_count_list):
 
     return mut_origin
 
-        
-def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_name,flanking,min_prior,gender,gene_name_index,CBtag,UBtag,line):
+def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_name,flanking,min_prior,gender,gene_name_index,run_type,bins,line):
     '''
     line_example:
     chr1    601435  724550  RP5-857K21.4    -       ENSG00000230021.3       lincRNA
@@ -448,7 +590,7 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
     chr12	52487212	52487212    het C   T   0.1,0.5
     chr12   52487212	52487212    mosaic C   T   0.1,0.5
     '''
-    # print("====",line)
+    print("====",line)
 
     out_list=[]
     sline=line.strip().split("\t")
@@ -492,93 +634,152 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
             # print(sline)
             print(f"something wrong? please check your input: {short_ind_germ_file}")
     # print(pos_candidate_dict)
-    in_bam_read=pysam.AlignmentFile(in_bam_name, "rb", reference_filename=ref_fasta,ignore_truncation=True)
     if pos_candidate_dict["mosaic_pos"]==[] or pos_candidate_dict["informative_SNP"]==[]:
-        # print("no")
+        print("no mosaic or no germ")
         return []
     
-    # print(gene_name,"start")
+    print(gene_name,"start")
     # candidate_allele_info=pos_candidate_dict["mosaic_pos"]+pos_candidate_dict["informative_SNP"]
     candidate_allele_info=list(set(count_allele))
-    #print(candidate_allele_info)
+    print(len(candidate_allele_info))
     ## offer a chrom pos initial and its candidate allele info
     per_read_dict=defaultdict(dict)
     allele_total_count=defaultdict(int)
     used_barcode=defaultdict(list)
-    for reads in in_bam_read.fetch(chr, max(0,pos_s-flanking),min(pos_e+flanking,chrom_size),multiple_iterators=True):
-        try:
-            seq_cut, pos_cut = handle_cigar(reads.cigar)
-            cut_seq=handle_seq(reads.seq, seq_cut)
-            cut_pos=handle_pos(reads.get_reference_positions(), pos_cut)
-        
-            CB=reads.get_tag(CBtag).strip()
-            UB=reads.get_tag(UBtag).strip()
 
-            # UMI_name = str(UB)
-            barcode_name = str(CB)+"_"+str(UB)
-        except:
-            continue
-    
-        for candidate_allele_tuple in candidate_allele_info:
-            candidate_allele=candidate_allele_tuple[0]
-            ref=candidate_allele_tuple[1]
-            if candidate_allele not in per_read_dict[barcode_name].keys():
-                # print("New")
-                per_read_dict[barcode_name][candidate_allele]={}
-                per_read_dict[barcode_name][candidate_allele]["count"]=defaultdict(int)
-                per_read_dict[barcode_name][candidate_allele]["quality"]={"A":defaultdict(int), \
-                                                                        "T":defaultdict(int), \
-                                                                        "C":defaultdict(int), \
-                                                                        "G":defaultdict(int)}
-            else:
-                pass
-                # print("Old")
+    start=max(0,pos_s-flanking)
+    end=min(pos_e+flanking,chrom_size)
+    # chunk_size = 1000
+    # print(range(start, end, chunk_size))
+    # i=0
+    # for chunk_start in range(start, end, chunk_size):
+    try:
+        # in_bam_read=pysam.AlignmentFile(in_bam_name, "rb", reference_filename=ref_fasta)
+        with pysam.AlignmentFile(in_bam_name, "rb", reference_filename=ref_fasta) as in_bam_read:
+            for reads in in_bam_read.fetch(chr, start, end):
+                try:
+                    if run_type=="visium":
+                        try:
+                            CB=reads.get_tag("CB").strip()
+                            UB=reads.get_tag("UB").strip()
 
-            pos_index=int(candidate_allele)-1
-            geno=""
-            if pos_index in cut_pos:
-                # effective_DP += 1
-                raw_index = handle_quality_matrix(cut_pos.index(pos_index),reads.seq,cut_seq)
-                quality=reads.get_forward_qualities()[raw_index]
-                geno = cut_seq[cut_pos.index(pos_index)]
-                if geno not in "ATCG":
-                    # per_read_dict[barcode_name][candidate_allele]["count"]={}
-                    # per_read_dict[barcode_name][candidate_allele]["quality"]={}
+                        except:
+                            continue
+                    elif run_type=="stereo":
+                        try:
+                            Cx_raw=int(reads.get_tag("Cx"))
+                            Cy_raw=int(reads.get_tag("Cy"))
+                            if bins !=1:
+                                Cx=round_to_nearest_bin(Cx_raw,bins)
+                                Cy=round_to_nearest_bin(Cy_raw,bins)
+                            else:
+                                Cx=Cx_raw
+                                Cy=Cy_raw
+                            UR=reads.get_tag("UR").strip()
+
+                            CB=str(Cx)+"_"+str(Cy)
+                            UB=str(UR)
+                            # UMI_name=str(Cx_raw)+"_"+str(Cy_raw)+"_"+str(UR)
+                        except:
+                            continue
+
+                    elif run_type=="ST":
+                        try:
+                            CB=str(reads.get_tag("B0"))
+                            UB=str(reads.get_tag("B3"))
+                            # barcode_name=str(CB)
+                            # UMI_name=str(UB)
+                        except:
+                            continue
+                    else:
+                        # print("type",run_type)
+                        continue
+
+                    seq_cut, pos_cut = handle_cigar(reads.cigar)
+                    cut_seq=handle_seq(reads.seq, seq_cut)
+                    cut_pos=handle_pos(reads.get_reference_positions(), pos_cut)
+
+                    # UMI_name = str(UB)
+                    barcode_name = str(CB)+"_"+str(UB)
+                except:
                     continue
-                # print(barcode_name,candidate_allele)
-                per_read_dict[barcode_name][candidate_allele]["count"][geno]+=1
-                per_read_dict[barcode_name][candidate_allele]["quality"][geno][quality]+=1
+                # print("read is done: ",barcode_name)   
+                for candidate_allele_tuple in candidate_allele_info:
+                    candidate_allele=candidate_allele_tuple[0]
+                    ref=candidate_allele_tuple[1]
 
-                if barcode_name not in used_barcode[candidate_allele]:
-                    allele_total_count[candidate_allele]+=1
-                    used_barcode[candidate_allele].append(barcode_name)
+                        # print("Old")
+
+                    pos_index=int(candidate_allele)-1
+                    geno=""
+                    if pos_index in cut_pos:
+                        # effective_DP += 1
+                        raw_index = handle_quality_matrix(cut_pos.index(pos_index),reads.seq,cut_seq)
+                        quality=reads.get_forward_qualities()[raw_index]
+                        geno = cut_seq[cut_pos.index(pos_index)]
+
+                        if geno not in "ATCG":
+                            # per_read_dict[barcode_name][candidate_allele]["count"]={}
+                            # per_read_dict[barcode_name][candidate_allele]["quality"]={}
+                            continue
+                        # print(barcode_name,candidate_allele)
+                        if candidate_allele not in per_read_dict[barcode_name].keys():
+                            # print("New")
+                            per_read_dict[barcode_name][candidate_allele]={}
+                            per_read_dict[barcode_name][candidate_allele]["count"]=defaultdict(int)
+                            per_read_dict[barcode_name][candidate_allele]["quality"]={"A":defaultdict(int), \
+                                                                                    "T":defaultdict(int), \
+                                                                                    "C":defaultdict(int), \
+                                                                                    "G":defaultdict(int)}
+                        else:
+                            pass
+                        per_read_dict[barcode_name][candidate_allele]["count"][geno]+=1
+                        per_read_dict[barcode_name][candidate_allele]["quality"][geno][quality]+=1
+
+                        if barcode_name not in used_barcode[candidate_allele]:
+                            allele_total_count[candidate_allele]+=1
+                            used_barcode[candidate_allele].append(barcode_name)
+            # if i==1:
+            #     print(per_read_dict)
+            del reads
+                # print("allele is done: ",barcode_name)   
+    except Exception as e:
+        print(f"Error in fetch: {e}")
+    finally:
+        print(gene_name," is done!")  # 确保最终执行        
+        # print(i," in ",gene_name," is done!")
             #consensus_read_count, consensus_read_quality=UMI_combination_spot(site_barcode_UMI_dict,chrom,pos,ref)
         # calculater per read
-    # print("yes1")    
+    print("yes1")    
     per_read_genotypes_count=defaultdict(list)
     per_read_genotypes_quality=defaultdict(list)
         # print("stat:",per_read_dict)
 
     for barcode in per_read_dict.keys():
         # print(barcode)
-        for candidate_allele in per_read_dict[barcode]:
-            ref=dict(candidate_allele_info)[candidate_allele][0]
-
-            count_dict=per_read_dict[barcode][candidate_allele]["count"]
-            quality_dict=per_read_dict[barcode][candidate_allele]["quality"]
-            if count_dict!={}:
-                # print("yes")
-                phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
-                # print(phred_dict)
-                most_proved_allele,phred=get_most_candidate_allele(phred_dict,ref)
-                # print(most_proved_allele,phred)
-            else:
-                # print("no")
+        # for candidate_allele in per_read_dict[barcode]:
+        for candidate_allele,ref in candidate_allele_info:
+            if candidate_allele not in per_read_dict[barcode].keys() :
                 phred_dict={}
                 most_proved_allele,phred=".","."
+            else:
+                # ref=dict(candidate_allele_info)[candidate_allele][0]
+                count_dict=per_read_dict[barcode][candidate_allele]["count"]
+                quality_dict=per_read_dict[barcode][candidate_allele]["quality"]
+                if count_dict!={}:
+                    # print("yes")
+                    phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
+                    # print(phred_dict)
+                    most_proved_allele,phred=get_most_candidate_allele(phred_dict,ref)
+                    # print(most_proved_allele,phred)
+                else:
+                    # print("no")
+                    phred_dict={}
+                    most_proved_allele,phred=".","."
             
             per_read_genotypes_count[barcode].append(most_proved_allele)
             per_read_genotypes_quality[barcode].append(phred)
+    del per_read_dict
     # print(candidate_allele_info)
     # print(per_read_genotypes_count.values())
     # print(candidate_allele_info[1:])
@@ -596,8 +797,12 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
                 continue
             
             short_list=[]
+            # print("1",candidate_allele_info_only_pos)
             index_mosaic=candidate_allele_info_only_pos.index(str(pos))
             index_germ=candidate_allele_info_only_pos.index(str(pos_germ))
+            # print("2",index_mosaic,index_germ)
+            # print("3",pos,pos_germ)
+
             # print(pos,index_mosaic,pos_germ,index_germ)
             # print(mosaic_pos,index_mosaic,info_SNP,index_germ)
             # print(per_read_genotypes_count.values())
@@ -605,6 +810,7 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
             # print("====",gene_name,mosaic_pos,info_SNP)
             for barcode in per_read_genotypes_count.keys():
                 values=per_read_genotypes_count[barcode]
+                # print()
                 bases=",".join([values[index_mosaic],values[index_germ]])
                 short_list.append(bases)
                 # if "." not in bases and bases[0]==mutant:
@@ -648,10 +854,7 @@ def phase_combine_get_candidate_germline(ref_fasta,short_ind_germ_file, in_bam_n
                 # print(candidate_allele_info[0],mut,haplo,phased,annotated_type,"\n", geno_count_dict)
             else:
                 pass
-    # print(gene_name,"finished")
+    del pos_candidate_dict
+    print(gene_name,"finished")
     return out_list
-   
-
-
-    
-
+                

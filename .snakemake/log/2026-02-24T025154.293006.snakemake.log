@@ -1,0 +1,71 @@
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 4
+Rules claiming more threads will be scaled down.
+Job stats:
+job             count
+------------  -------
+all                 1
+filter              1
+genotyper           1
+get_features        1
+pred                1
+total               5
+
+Select jobs to execute...
+
+[Tue Feb 24 02:51:55 2026]
+rule genotyper:
+    input: demo/counts_files/demo.spot.count.out, demo/counts_files/demo.cluster_filter.count.out, demo/counts_files/demo.ind_filter.count.out, demo/cluster_info/result/demo_cluster.txt, demo/demo.prior.out, demo/refined_umi_read_cellNum.txt
+    output: demo/geno_files/demo.ind_genotype.out, demo/geno_files/demo.ind_genotype_filter.out, demo/geno_files/demo.germ_genotype.out, demo/geno_files/demo.cluster_vaf.out, demo/geno_files/demo.spot_genotype.out
+    jobid: 9
+    reason: Updated input files: demo/demo.prior.out
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Tue Feb 24 02:52:00 2026]
+Finished job 9.
+1 of 5 steps (20%) done
+Select jobs to execute...
+
+[Tue Feb 24 02:52:00 2026]
+rule get_features:
+    input: /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa, demo/bam_filter/IN.bam, demo/bam_filter/IN_filter.bam, demo/cluster_info/result/demo_results.h5ad, demo/counts_files/demo.spot.count.out, demo/counts_files/demo.cluster_filter.count.out, demo/counts_files/demo.ind_filter.count.out, demo/cluster_info/result/demo_cluster.txt, demo/demo.prior.out, demo/geno_files/demo.ind_genotype_filter.out, demo/geno_files/demo.germ_genotype.out, demo/geno_files/demo.cluster_vaf.out, demo/geno_files/demo.spot_genotype.out, demo/error/demo.lysis_profile.txt
+    output: demo/features_dir/demo.spatial_feature.txt, demo/features_dir/demo.features.txt, demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    jobid: 3
+    reason: Input files updated by another job: demo/geno_files/demo.ind_genotype_filter.out, demo/geno_files/demo.germ_genotype.out, demo/geno_files/demo.cluster_vaf.out, demo/geno_files/demo.spot_genotype.out
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Tue Feb 24 03:03:17 2026]
+Finished job 3.
+2 of 5 steps (40%) done
+Select jobs to execute...
+
+[Tue Feb 24 03:03:17 2026]
+rule pred:
+    input: demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    output: demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt, demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt
+    jobid: 2
+    reason: Missing output files: demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt, demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt; Input files updated by another job: demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Tue Feb 24 03:03:27 2026]
+Error in rule pred:
+    jobid: 2
+    input: demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt
+    output: demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt, demo/predict_spatial_feature_free/results/demo_total_pred_truesites.txt
+    shell:
+        
+        python /storage/douyanmeiLab/yangzhirui/SpaceTracer//4_run_model_predict.py predict              --input demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt             --outdir demo/predict_spatial_feature_preserved             -s demo             --train FALSE --thr_altcount 5 --phase_refine FALSE  --save FALSE             --model_dir /storage/douyanmeiLab/yangzhirui/SpaceTracer//models_trained/spatial_feature_preserved_model             --model_name spatial_feature_preserved
+        
+        python /storage/douyanmeiLab/yangzhirui/SpaceTracer//4_run_model_predict.py predict             --input demo/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt             --outdir demo/predict_spatial_feature_free             -s demo             --train FALSE --thr_altcount 5 --phase_refine FALSE  --save FALSE             --model_dir /storage/douyanmeiLab/yangzhirui/SpaceTracer//models_trained/spatial_feature_free_model             --no_spatial True             --model_name spatial_feature_free
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Removing output files of failed job pred since they might be corrupted:
+demo/predict_spatial_feature_preserved/results/demo_total_pred_truesites.txt
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: ../.snakemake/log/2026-02-24T025154.293006.snakemake.log

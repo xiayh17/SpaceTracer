@@ -17,11 +17,29 @@ from pybedtools import BedTool
 import pysam
 import scipy
 import scipy.stats
-from module.UMI_combine import calculate_UMI_combine_phred, get_most_candidate_allele, handle_cigar, handle_pos, handle_quality_matrix, handle_seq
+# from module.UMI_combine import calculate_UMI_combine_phred, get_most_candidate_allele, handle_cigar, handle_pos, handle_quality_matrix, handle_seq
 from module.read_file import read_h5ad_file_2
 from module.spatial_features import spatial_moran
-from utils import calc_SegBias_for_one_sample, calc_vdb, combine_info_from_cigar, do_wilicox_sum_test, get_chr_size, get_indel_info, handle_p_value_log10, handle_posname,check_dir, judge_pos_in_indel, str_to_dict
+from utils import calc_SegBias_for_one_sample, calc_vdb, calculate_rbc_for_paired_wilcoxon, combine_info_from_cigar, do_wilicox_sum_test, get_chr_size, get_indel_info, handel_bam_file,handel_bam_file_downsampleUMI, handle_p_value_log10, handle_posname,check_dir, judge_pos_in_indel, round_to_nearest_bin, str_to_dict, wilcoxon_with_rbc,barcode_cell_mapping
 from pyfaidx import Fasta
+import gc
+import pickle
+import statsmodels.stats.multitest as smm
+
+##input file: 
+'''
+file: phasing results
+chr1    9271168 A       G       NA      chr1_9271218_G_T        H6PD    383     215     3       haplo>3 artifacts       A,G:125;A,T:87;G,G:1;G,T:2
+chr1    9271195 A       G       NA      chr1_9271218_G_T        H6PD    372     269     4       haplo>3 artifacts       A,G:158;A,T:107;G,G:3;G,T:1
+chr1    16618273        G       T       NA      chr1_16618314_G_C       CROCCP2 169     154     3       haplo>3 artifacts       G,G:82;G,C:69;T,G:2;T,C:1
+chr1    16618274        C       A       NA      chr1_16618314_G_C       CROCCP2 170     155     4       haplo>3 artifacts       C,G:80;C,C:71;A,G:3;A,C:1
+
+file: spatial feature.txt
+#chr	pos	ref	alt	test_sig	early_mutation	late_mutation	verylate_mutation	ks_pvalue	
+# moranI_pvalue	mutant_rate	mutant_rate_prob	mutant_rate_likelihood mutant_rate_vaf	mean_vaf	
+# max_vaf	r_square	wilcoxon_pvalue	outlier_clusters	outlier_vaf	outlier_moranI_pvalue
+
+'''
 
 
 def refine_mean(in_list):
@@ -61,7 +79,8 @@ class Features:
         # self.readLen=120
 
         #ind genotype
-        self.spotNum="no"
+        self.spot_num="no"
+        self.downsample_spot_num="no"
         self.consensus_read_count="no"
         # self.refhom_likelihood="no"
         # self.althom_likelihood="no"
@@ -74,21 +93,21 @@ class Features:
         self.vaf_cluster_std_dev="no"
 
         #spatial_feature
-        self.r2="no"
-        self.wilcoxon_p="no"
-        self.wilcoxon_s="no"
+        self.alt_vs_total_dp_r2="no"
+        self.alt_vs_total_dp_paired_wilcoxon_p="no"
+        self.alt_vs_total_dp_paired_wilcoxon_s="no"
 
         self.test_sig="no"
-        self.KS_p="no"
-        self.KS_s="no"
-        self.MI_p="no"
-        self.MI_s="no"
+        self.mut_vs_nonmut_spots_KS_p="no"
+        self.mut_vs_nonmut_spots_KS_s="no"
+        self.mut_vs_nonmut_spots_MI_p="no"
+        self.mut_vs_nonmut_spots_MI_s="no"
         self.mutant_rate="no"
         self.mutant_rate_prob="no"
         self.mutant_rate_likelihood="no"
         self.mutant_rate_vaf="no"
-        self.mean_AFspot="no"
-        self.max_AFspot="no"
+        self.all_spots_vaf_mean="no"
+        self.all_spots_vaf_max="no"
 
         #spatial_feature: outlier cluter related
         self.outlier_moranI_pvalue="no"
@@ -170,8 +189,8 @@ class Features:
         self.mappability_score="no"
 
         #annotation from annovar
-        self.anno="no"
-        self.anno_gene="no"
+        self.variant_anno="no"
+        self.gene_anno="no"
 
         #fasta context and GCcontent
         # self.context="no"
@@ -179,37 +198,52 @@ class Features:
         self.DNAMutationType="no"
         self.RNAMutationType="no"
         self.equal_to_previous_bases="no"
-        self.cause_ploy_alt="no"
+        self.cause_poly_alt="no"
+        self.context_10bp="no"
 
         #read-level info
-        self.dp="no"
-        self.alt_SpotNum="no"
-        self.alt_dp="no"
+        self.read_depth="no"
+        self.alt_spot_num="no"
+        self.downsample_alt_spot_num="no"
+        # self.alt_allele_count="no"
+        self.ref_allele_count="no"
+        self.alt_allele_count="no"
+        self.alt2_allele_count="no"
         self.vaf="no"
         self.ref_hardclip_prop="no"
         self.alt_hardclip_prop="no"
         self.ref_softclip_prop="no"
         self.alt_softclip_prop="no"
+        self.softclip_prop="no"
         self.hardclip_length_s="no"
         self.hardclip_length_p="no"
         self.hardclip_prop_odds="no"
         self.hardclip_prop_p="no"
         self.softclip_length_s="no"
         self.softclip_length_p="no"
+        self.softclip_length_rbc="no"
         self.softclip_prop_odds="no"
         self.softclip_prop_p="no"
         self.alt2_proportion="no"
-        self.indel_proportion_SNPonly="no"
+        self.indel_proportion_for_site="no"
+        self.reads_with_indel_odds="no"
+        self.reads_with_indel_p="no"
         self.mapq_difference="no"
+        self.mapq_mean="no",
+        self.ref_mapq_mean="no",
+        self.alt_mapq_mean="no",
         self.mapq_p="no"
         self.mapq_s="no"
-        self.sb_p="no"
-        self.sb_odds="no"
-        self.mapper_odds="no"
-        self.mapper_p="no"
+        self.mapq_rbc="no"
+        self.strand_bias_p="no"
+        self.strand_bias_odds="no"
+        self.multi_mapper_odds="no"
+        self.multi_mapper_p="no"
         self.ref_multi_map_prop="no"
         self.alt_multi_map_prop="no"
+        self.multi_map_prop="no"
         self.mismatches_p="no"
+        self.mismatches_rbc="no"
         self.mismatches_s="no"
         self.ref_mismatches_mean="no"
         self.alt_mismatches_mean="no"
@@ -219,7 +253,11 @@ class Features:
         self.leftpos_s="no"
         self.seqpos_p="no"
         self.seqpos_s="no"
+        self.querypos_rbc="no"
+        self.leftpos_rbc="no"
+        self.seqpos_rbc="no"
         self.baseq_p="no"
+        self.baseq_rbc="no"
         self.baseq_s="no"
         self.mean_distance_to_end="no"
         self.median_distance_to_end="no"
@@ -227,36 +265,89 @@ class Features:
         self.median_distance_to_end_remove_clip="no"
         self.distance_to_end_p="no"
         self.distance_to_end_s="no"
+        # self.distance_to_end_by_UMI_p="no"
+        # self.distance_to_end_by_UMI_s="no"
         self.distance_to_end_remove_clip_p="no"
         self.distance_to_end_remove_clip_s="no"
+        self.UMI_end_s="no"
+        self.UMI_end_p="no"
+        self.UMI_end_rbc="no"
+        self.ref_UMI_end_mean_remove_clip="no"
+        self.ref_UMI_end_median_remove_clip="no"
+        self.alt_UMI_end_mean_remove_clip="no"
+        self.alt_UMI_end_median_remove_clip="no"
+        self.UMI_end_remove_clip_s="no"
+        self.UMI_end_remove_clip_p="no"
+        self.UMI_end_remove_clip_rbc="no"
+
+        self.ref_UMI_end_mean="no"
+        self.ref_UMI_end_median="no"
+        self.alt_UMI_end_mean="no"
+        self.alt_UMI_end_median="no"
+
+        self.per_ref_UMI_end_mean="no"
+        self.per_ref_UMI_end_median="no"
+        self.per_alt_UMI_end_mean="no"
+        self.per_alt_UMI_end_median="no"
+        self.per_ref_UMI_end_value_mean="no"
+        self.per_ref_UMI_end_value_median="no"
+        self.per_alt_UMI_end_value_mean="no"
+        self.per_alt_UMI_end_value_median="no"
+        self.per_ref_UMI_end_remove_clip_mean="no"
+        self.per_ref_UMI_end_remove_clip_median="no"
+        self.per_alt_UMI_end_remove_clip_mean="no"
+        self.per_alt_UMI_end_remove_clip_median="no"
+        self.per_ref_UMI_end_remove_clip_value_mean="no"
+        self.per_ref_UMI_end_remove_clip_value_median="no"
+        self.per_alt_UMI_end_remove_clip_value_mean="no"
+        self.per_alt_UMI_end_remove_clip_value_median="no"
+        
+        self.per_UMI_end_s="no"
+        self.per_UMI_end_p="no"
+        self.per_UMI_end_rbc="no"
+        self.per_UMI_end_remove_clip_s="no"
+        self.per_UMI_end_remove_clip_p="no"
+        self.per_UMI_end_remove_clip_rbc="no"
+
         self.ref_baseq1b_p="no"
         self.ref_baseq1b_s="no"
+        self.ref_baseq1b_rbc="no"
+        self.alt_baseq1b_rbc="no"
         self.alt_baseq1b_p="no"
         self.alt_baseq1b_s="no"
         self.VDB="no"
         self.RPBZ="no"
         self.SGB="no"
 
+        self.UMI_number_per_spot_s="no"
+        self.UMI_number_per_spot_p="no"
+        self.ref_UMI_number_per_spot_max="no"
+        self.alt_UMI_number_per_spot_max="no"
+        self.UMI_number_per_spot_median="no"
+        self.UMI_number_per_spot_mean="no"
+        self.ref_UMI_number_per_spot_median="no"
+        self.alt_UMI_number_per_spot_median="no"
+        self.alt_vs_total_dp_paired_wilcoxon_rbc="no"
+
         self.read_number_per_spot_s="no"
         self.read_number_per_spot_p="no"
 
-        self.UMI_number_per_spot_s="no"
-        self.UMI_number_per_spot_p="no"
-
-        self.ref_UMI_number_per_spot_max="no"
-        self.alt_UMI_number_per_spot_max="no"
-        self.ref_UMI_number_per_spot_median="no"
-        self.alt_UMI_number_per_spot_median="no"
-
-        self.alt2_proportion_consensus="no"
-        self.dp_consensus="no"
-        self.alt_dp_consensus="no"
-        self.vaf_consensus="no"
-
-        self.reverse_dp="no"
-        self.forward_dp="no"
-        self.alt_reverse_dp="no"
-        self.alt_forward_dp="no"
+        self.consensus_alt2_proportion="no"
+        self.consensus_UMI_count="no"
+        self.consensus_alt_allele_count="no"
+        self.downsample_consensus_UMI_count="no"
+        self.downsample_consensus_alt_allele_count="no"
+        self.consensus_vaf="no"
+        self.mut_spots_vaf_mean="no"
+        self.mut_spots_vaf_median="no"
+        self.only_alt_mutant_spot_prop="no"
+        self.downsample_mut_spots_vaf_mean="no"
+        self.downsample_mut_spots_vaf_median="no"
+        self.downsample_only_alt_mutant_spot_prop="no"
+        self.read_depth_reverse="no"
+        self.read_depth_forward="no"
+        self.alt_allele_count_reverse="no"
+        self.alt_allele_count_forward="no"
         self.major_read_strand="no"
 
         self.ref_ins_prop="no"
@@ -268,22 +359,47 @@ class Features:
         self.alt_ins_major_prop="no"
         self.alt_del_major_prop="no"
 
-        self.alt_UMI_consistence_prop="no"
-        self.alt_consistence_hard_prop="no"
-        self.alt_consistence_soft_prop="no"
+        self.alt_UMI_avg_consistence="no"
+        self.alt_consistent_UMI_prop_strict="no"
+        self.alt_consistent_UMI_prop_relaxed="no"
+
+        self.alt_UMI_avg_consistence_remove_single_read="no"
+        self.alt_consistent_UMI_prop_strict_remove_single_read="no"
+        self.alt_consistent_UMI_prop_relaxed_remove_single_read="no"
 
         self.read_number_p="no"
         self.read_number_s="no"
+        self.read_number_rbc="no"
         self.ref_read_number_perUMI_median="no"
         self.alt_read_number_perUMI_median="no"
         self.ref_read_number_perUMI_max="no"
         self.alt_read_number_perUMI_max="no"
 
+        self.ref_UMI_number_perspot_median="no"
+        self.alt_UMI_number_perspot_median="no"
+        self.ref_UMI_number_perspot_max="no"
+        self.alt_UMI_number_perspot_max="no"
+
         self.fref="no"
         self.falt="no"
 
-        self.muts_in_cluster_p="no"
-        self.muts_in_cluster_s="no"
+        # self.muts_in_cluster_p="no"
+        # self.muts_in_cluster_s="no"
+        self.baseq_p_adj="no"
+        self.ref_baseq1b_p_adj="no"
+        self.alt_baseq1b_p_adj="no"
+        self.querypos_p_adj="no"
+        self.leftpos_p_adj="no"
+        self.seqpos_p_adj="no"
+        self.distance_to_end_p_adj="no"
+        self.UMI_end_p_adj="no"
+        self.UMI_end_remove_clip_p_adj="no"
+        self.per_UMI_end_p_adj="no"
+        self.per_UMI_end_remove_clip_p_adj="no"
+        self.mismatches_p_adj="no"
+        self.mapq_p_adj="no"
+        self.read_number_p_adj="no"
+        self.softclip_length_p_adj="no"
 
     def add_info_from_ind_genotype(self, ind_geno_line):
         """
@@ -291,7 +407,7 @@ class Features:
 
         """
         ind_geno_line=ind_geno_line.strip().split("\t")
-        self.spotNum=ind_geno_line[6]
+        self.spot_num=ind_geno_line[6]
         self.consensus_read_count=ind_geno_line[7]
         if self.alt==ind_geno_line[4]:
             # self.refhom_likelihood=ind_geno_line[8]
@@ -344,20 +460,20 @@ class Features:
 
         """
         self.test_sig=sf_line[4]
-        self.KS_s=sf_line[8]
-        self.KS_p=sf_line[9]
-        self.MI_s=sf_line[10]
-        self.MI_p=sf_line[11]
+        self.mut_vs_nonmut_spots_KS_s=sf_line[8]
+        self.mut_vs_nonmut_spots_KS_p=sf_line[9]
+        self.mut_vs_nonmut_spots_MI_s=sf_line[10]
+        self.mut_vs_nonmut_spots_MI_p=sf_line[11]
         self.mutant_rate=sf_line[12]
         self.mutant_rate_prob=sf_line[13]
         self.mutant_rate_likelihood=sf_line[14]
         self.mutant_rate_vaf=sf_line[15]
-        self.mean_AFspot=sf_line[16]
-        self.max_AFspot=sf_line[17]
+        self.all_spots_vaf_mean=sf_line[16]
+        self.all_spots_vaf_max=sf_line[17]
 
-        self.r2=sf_line[18]
-        self.wilcoxon_s=sf_line[19]
-        self.wilcoxon_p=sf_line[20]
+        self.alt_vs_total_dp_r2=sf_line[18]
+        self.alt_vs_total_dp_paired_wilcoxon_s=sf_line[19]
+        self.alt_vs_total_dp_paired_wilcoxon_p=sf_line[20]
     
         self.outlier_clusters=sf_line[21]
         self.outlier_vaf=sf_line[22]
@@ -365,6 +481,37 @@ class Features:
         self.outlier_moranI_pvalue=sf_line[24]
         self.num_outlier_cluster=len(self.outlier_clusters.strip().split(","))
 
+        # self.outlier_vaf=sf_line[19]
+        # self.nooutlier_vaf_ratio=sf_line[20]
+        # self.nooutlier_prop_ratio=sf_line[21]
+        # self.outlier_moranI_prob_pvalue=sf_line[22]
+        # self.outlier_moranI_vaf_pvalue=sf_line[23]
+        # self.num_outlier_cluster=len(self.outlier_clusters.strip().split(","))
+
+    ####### this version the distance exon is list
+    # def add_info_from_gff(self,sline):
+    #     """
+    #     gene_info, collected from gff file, download from gencode
+    #     """
+    #     try:
+    #         exon_boundary_1=int(sline[6])-int(sline[1]); exon_boundary_2=int(sline[7])-int(sline[1])
+    #         strand=sline[9]; Infos=sline[11]
+    #         info_dict=handle_gff_info(Infos)
+    #         exon_distance=exon_boundary_1 if abs(exon_boundary_1)<abs(exon_boundary_1) else exon_boundary_2
+    #         if self.gene_id=="no":
+    #             self.gene_id=[]
+
+    #         if "transcript_id" in info_dict.keys():
+    #             t_id=info_dict["transcript_id"].split(".")[0]
+    #             print(self.transcript_name)
+    #             print("t_id",t_id)
+    #             if t_id in self.transcript_name:
+    #                 self.gene_type.append(info_dict["gene_type"])
+    #                 self.exon_number.append(info_dict["exon_number"])
+    #                 self.strand.append(strand)
+    #                 self.distanceExon.append(exon_distance)
+    #     except:
+    #         print(sline)
 
     def add_info_from_gff(self,sline):
         """
@@ -411,14 +558,8 @@ class Features:
                 exon_distance=abs(exon_boundary_1) if abs(exon_boundary_1)<abs(exon_boundary_1) else abs(exon_boundary_2)
                 self.distanceExon.append(exon_distance)
         except:
-            try:
-                if sline[3]!=".":
-                    exon_boundary_1=int(sline[6])-int(sline[1]); exon_boundary_2=int(sline[7])-int(sline[1])
-                    exon_distance=abs(exon_boundary_1) if abs(exon_boundary_1)<abs(exon_boundary_1) else abs(exon_boundary_2)
-                    self.distanceExon.append(exon_distance)
-            except:
-                pass
-                print(sline)
+            print(sline)
+            pass
         
 
     # def add_info_from_phase(self,phase_result,phase_type="combine"):
@@ -478,7 +619,7 @@ class Features:
         try:
             self.support_reads_prop_across_hSNPs=max(mutant_counts)/sum(mutant_counts)
         except:
-            print(s_phase_result)
+            print("s_phase_result",s_phase_result)
         for index,label in zip([nearest_index,most_mutant_index],["nearest","most"]):
             line=s_phase_result[index].strip().split("\t")
             haplotype=line[10]
@@ -581,11 +722,58 @@ class Features:
                 self.mappability_score=[]
             score=mappability_info.strip().split("\t")[3]
             self.mappability_score.append(score)
-        
+        # elif len(mappability_info.strip().split("\n"))>1:
+        #     # print(">1:",mappability_info)
+        #     # print("line:",mappability_info.strip())
+        #     score=[]
+        #     for line in mappability_info.strip().split("\n"):
+        #         score.append(line.strip().split("\t")[3])
+        #     self.mappability_score=",".join(score)
+
+#     def add_annotation_from_annovar_table(self,annovar_info):
+#         """
+# chr1    2185380 2185380 T       A       exonic  FAAP20  .       nonsynonymous   SNV
+# chr1    2310102 2310102 C       A       UTR3    SKI     NM_003036:c.*3337C>A    .       .
+# chr1    3630128 3630128 G       A       downstream      TPRG1L;WRAP73   dist=642        .       .
+# chr1    632663  632663  C       A       ncRNA_exonic    MIR12136        .       .       .
+# chr1    633442  633442  C       A       upstream        MIR12136        dist=757        .       .
+# chr1    633963  633963  T       G       intergenic      MIR12136;OR4F16 dist=1278;dist=51753    .       .
+# chr1    19219002        19219002        G       A       ncRNA_intronic  EMC1-AS1        .       .       .
+# chr1    153357876       153357876       G       T       UTR5    S100A9  NM_002965:c.-408G>T     .       .
+# chr20   63735923        63735923        C       T       UTR5;UTR3       LIME1;ZGPAT     NM_001305654:c.-1627C>T;NM_001083113:c.*4C>T;NM_032527:c.*4C>T;NM_001195653:c.*4C>T;NM_001195654:c.*4C>T;NM_181485:c.*4C>T      .       .
+#         """
+#         # print(annovar_info)
+#         s_annovar_info=annovar_info.strip().split("\t")
+#         self.pos_anno=s_annovar_info[5]
+
+#         if self.pos_anno=="exonic":
+#             self.func_anno=s_annovar_info[8]
+
+
+#     def add_annotation_from_annovar_all(self,annovar_info):
+#         """
+#         UTR5    RPS27(ENST00000651669.1:c.-35C>T)       chr1    153990762       153990762       C       T
+#         UTR5    RPS27(ENST00000651669.1:c.-34C>T)       chr1    153990763       153990763       C       T
+#         UTR3    RPS27(ENST00000651669.1:c.*54T>C)       chr1    153992147       153992147       T       C
+#         UTR3    ARL8A(ENST00000272217.7:c.*1041T>A,ENST00000614750.1:c.*1090T>A),GPR37L1(ENST00000367282.6:c.*4870A>T)  chr1    202133426       202133426       A       T
+#         intergenic      ENSG00000223649(dist=38643),SLC30A1(dist=40008) chr1    211531560       211531560       T       C
+#         """
+#         # print(annovar_info)
+#         s_annovar_info=annovar_info.strip().split("\t")
+#         self.pos_anno=s_annovar_info[0]
+
+
+#     def add_annotation_from_annovar_exon(self,annovar_info):
+#         """
+#         line3   nonsynonymous SNV       RPS12:ENST00000230050.4:exon3:c.G73C:p.A25P,    chr6    132815030       132815030       G       C
+#         """
+#         s_annovar_info=annovar_info.strip().split("\t")
+#         self.func_anno=s_annovar_info[1]
+
     def add_annotation_from_annovar(self,annovar_info):
         s_annovar_info=annovar_info.strip().split("\t")
-        self.anno=s_annovar_info[1]
-        self.anno_gene=s_annovar_info[2]
+        self.variant_anno=s_annovar_info[1]
+        self.gene_anno=s_annovar_info[2]
 
 
 
@@ -613,11 +801,11 @@ class Features:
     
     def add_read_info(self,read_info_dict,dp):
         """
-        read_info_dict[geno].keys:
-        ["number_mismatch","is_reverse", "map_q", "is_indel", "baseq"
-            "baseq1b", "rightpos_p", "leftpos_p","seqpos","querypos", "distance_to_end"
-            "del_length", "del_distance", "del_num", "ins_distance", "ins_length","ins_num",
-            "left_hardclip","right_hardclip","hardclip_length", "left_softclip", "right_softclip", "softclip_length"]    
+        # read_info_dict[geno].keys:
+        # ["number_mismatch","is_reverse", "map_q", "is_indel", "baseq"
+        #     "baseq1b", "rightpos_p", "leftpos_p","seqpos","querypos", "distance_to_end"
+        #     "del_length", "del_distance", "del_num", "ins_distance", "ins_length","ins_num",
+        #     "left_hardclip","right_hardclip","hardclip_length", "left_softclip", "right_softclip", "softclip_length"]    
         """
         def simple_to_get_list(read_info_dict,ref_allele,alt_allele,var):
             # print(ref_allele,alt_allele, ref_allele.split(","))
@@ -627,6 +815,7 @@ class Features:
             
         get_list=partial(simple_to_get_list,read_info_dict,self.ref,self.alt)
 
+        odds_eps=0
 
         # gene id and trancript id
         GeneID_list=[]
@@ -663,68 +852,99 @@ class Features:
         ref_mappers, alt_mappers=get_list("number_mapper")
         refine_ref_mappers_uniq = len([i for i in ref_mappers if i == 1]); refine_ref_mappers_multi=len(ref_mappers)-refine_ref_mappers_uniq
         refine_alt_mappers_uniq = len([i for i in alt_mappers if i == 1]); refine_alt_mappers_multi=len(alt_mappers)-refine_alt_mappers_uniq
-        self.mapper_odds, self.mapper_p = scipy.stats.fisher_exact([[refine_alt_mappers_multi, refine_alt_mappers_uniq ],[refine_ref_mappers_multi, refine_ref_mappers_uniq]])
+        self.multi_mapper_odds, self.multi_mapper_p = scipy.stats.fisher_exact([[refine_alt_mappers_multi, refine_alt_mappers_uniq ],[refine_ref_mappers_multi, refine_ref_mappers_uniq]])
         self.ref_multi_map_prop=refine_ref_mappers_multi/len(ref_mappers) if len(ref_mappers)!=0 else "NA"
         self.alt_multi_map_prop=refine_alt_mappers_multi/len(alt_mappers) if len(alt_mappers)!=0 else "NA"
+        all_mappers=len(ref_mappers)+len(alt_mappers)
+        self.multi_map_prop=(refine_ref_mappers_multi+refine_alt_mappers_multi)/all_mappers if all_mappers!=0 else "NA"
 
         self.ref_mismatches_mean=refine_mean(ref_mismatches)
         self.alt_mismatches_mean=refine_mean(refine_alt_mismatches)
-        self.mismatches_s,self.mismatches_p=do_wilicox_sum_test(ref_mismatches,refine_alt_mismatches,type="list")
+        # self.mismatches_s,self.mismatches_p=do_wilicox_sum_test(ref_mismatches,refine_alt_mismatches,type="list")
+        self.mismatches_s,self.mismatches_p,self.mismatches_rbc=wilcoxon_with_rbc(ref_mismatches,refine_alt_mismatches)
         
         ref_is_reverse, alt_is_reverse=get_list("is_reverse")
         refine_ref_is_reverse = len([i for i in ref_is_reverse if i == 1]); refine_ref_is_forward = len(ref_is_reverse)-refine_ref_is_reverse
         refine_alt_is_reverse = len([i for i in alt_is_reverse if i == 1]); refine_alt_is_forward = len(alt_is_reverse)-refine_alt_is_reverse
-        self.sb_odds, self.sb_p = scipy.stats.fisher_exact([[refine_alt_is_reverse, refine_alt_is_forward ],[refine_ref_is_reverse, refine_ref_is_forward]])
+        self.strand_bias_odds, self.strand_bias_p = scipy.stats.fisher_exact([[refine_alt_is_reverse, refine_alt_is_forward ],[refine_ref_is_reverse, refine_ref_is_forward]])
 
-        ref_map_q, alt_map_q=get_list("map_q")
-        self.mapq_s,self.mapq_p=do_wilicox_sum_test(ref_map_q,alt_map_q,method="greater",type="list")
-        self.mapq_difference=refine_diff(refine_mean(ref_map_q),refine_mean(alt_map_q))
+        ref_mapq,alt_mapq=get_list("map_q")
+        self.ref_mapq_mean=refine_mean(ref_mapq)
+        self.alt_mapq_mean=refine_mean(ref_mapq)
+        self.mapq_mean=refine_mean(ref_mapq+alt_mapq)
+        self.mapq_s,self.mapq_p,self.mapq_rbc=wilcoxon_with_rbc(ref_mapq,alt_mapq,alternative="greater")
 
-        self.dp=dp
+        # ref_map_q, alt_map_q=get_list("map_q")
+        # self.mapq_s,self.mapq_p=do_wilicox_sum_test(ref_map_q,alt_map_q,method="greater",type="list")
+        self.mapq_difference=refine_diff(refine_mean(ref_mapq),refine_mean(alt_mapq))
+        ref_ind_num,alt_ind_num=get_list("ind_num")
+        ref_read_with_indel = len([i for i in ref_ind_num if i > 0]); ref_read_without_indel = len(ref_ind_num)-ref_read_with_indel
+        alt_read_with_indel = len([i for i in alt_ind_num if i > 0]); alt_read_without_indel = len(alt_ind_num)-alt_read_with_indel
+        self.reads_with_indel_odds, self.reads_with_indel_p = scipy.stats.fisher_exact([[alt_read_with_indel+odds_eps, alt_read_without_indel+odds_eps ],[ref_read_with_indel+odds_eps, ref_read_without_indel+odds_eps]])
+    
+        self.read_depth=dp
         alt_dp= int(read_info_dict[self.alt]["dp"])
-        self.alt_dp=alt_dp
+        # self.alt_allele_count=alt_dp
         if dp!=0:
             self.vaf=int(alt_dp)/int(dp)
         else:
             self.vaf=0
         if dp!=0:
-            self.indel_proportion_SNPonly=sum(read_info_dict["del"]["is_indel"])/dp
+            self.indel_proportion_for_site=sum(read_info_dict["del"]["is_indel"])/dp
         else:
-            self.indel_proportion_SNPonly=0
+            self.indel_proportion_for_site=0
 
-        self.reverse_dp=sum([int(read_info_dict[allele]["reverse_dp"]) for allele in "ATCG"])
-        self.forward_dp=sum([int(read_info_dict[allele]["forward_dp"]) for allele in "ATCG"])
-        self.alt_reverse_dp=int(read_info_dict[self.alt]["reverse_dp"])
-        self.alt_forward_dp=int(read_info_dict[self.alt]["forward_dp"])
+        self.ref_allele_count=sum([float(read_info_dict[allele]["dp"]) for allele in self.ref.split(",") ])
+        self.alt_allele_count=sum([float(read_info_dict[allele]["dp"]) for allele in self.alt.split(",") ])
+        other_count_dict={base:int(read_info_dict[base]["dp"]) for base in "ATCG" if base not in self.ref+self.alt}
+        self.alt2_allele_count=max(list(other_count_dict.values()),default=0)
 
-        if self.reverse_dp>=self.forward_dp:
+        self.read_depth_reverse=sum([int(read_info_dict[allele]["reverse_dp"]) for allele in "ATCG"])
+        self.read_depth_forward=sum([int(read_info_dict[allele]["forward_dp"]) for allele in "ATCG"])
+        self.alt_allele_count_reverse=int(read_info_dict[self.alt]["reverse_dp"])
+        self.alt_allele_count_forward=int(read_info_dict[self.alt]["forward_dp"])
+
+        if self.read_depth_reverse>=self.read_depth_forward:
             self.major_read_strand="-"
-        elif self.reverse_dp<self.forward_dp:
+        elif self.read_depth_reverse<self.read_depth_forward:
             self.major_read_strand="+"
 
         ref_baseq, alt_baseq=get_list("baseq")
-        self.baseq_s,self.baseq_p=do_wilicox_sum_test(ref_baseq,alt_baseq,method="greater",type="list")
+        self.baseq_s,self.baseq_p,self.baseq_rbc=wilcoxon_with_rbc(ref_baseq,alt_baseq,alternative="greater")
 
         ref_baseq1b,alt_baseq1b=get_list("baseq1b")
-        self.ref_baseq1b_s, self.ref_baseq1b_p=do_wilicox_sum_test(ref_baseq,ref_baseq1b,method="greater",type="list")
-        self.alt_baseq1b_s, self.alt_baseq1b_p=do_wilicox_sum_test(alt_baseq,alt_baseq1b,method="greater",type="list")
-        # print(ref_baseq,ref_baseq1b)
-        if self.dp!=0:
-            self.alt2_proportion=int(max([read_info_dict[allele]["dp"] for allele in "ATCG" if allele not in self.ref+self.alt]))/self.dp
+        self.ref_baseq1b_s,self.ref_baseq1b_p,self.ref_baseq1b_rbc=wilcoxon_with_rbc(ref_baseq1b,ref_baseq,alternative="greater")
+        self.alt_baseq1b_s,self.alt_baseq1b_p,self.alt_baseq1b_rbc=wilcoxon_with_rbc(alt_baseq1b,alt_baseq,alternative="greater")
 
+        # self.ref_baseq1b_s, self.ref_baseq1b_p=do_wilicox_sum_test(ref_baseq,ref_baseq1b,method="greater",type="list")
+        # self.alt_baseq1b_s, self.alt_baseq1b_p=do_wilicox_sum_test(alt_baseq,alt_baseq1b,method="greater",type="list")
+        # print(ref_baseq,ref_baseq1b)
+        # if self.read_depth!=0:
+        #     self.alt2_proportion=int(max([read_info_dict[allele]["dp"] for allele in "ATCG" if allele not in self.ref+self.alt]))/self.read_depth
+        candidates = [allele for allele in "ATCG" if allele not in [self.ref, self.alt]]
+        if candidates:
+            self.alt2 = max(candidates, key=lambda x: read_info_dict[x]["dp"])
+            self.alt2_proportion = refine_mean(read_info_dict[self.alt2]["base_proportion_per_UMI"])
+        else:
+            self.alt2 = None
+            self.alt2_proportion = 0.0
         # ref_rightpos,alt_rightpos=get_list("rightpos_p")
         # _,self.rightpos_p=do_wilicox_sum_test(ref_rightpos,alt_rightpos,type="list")
 
         ref_leftpos,alt_leftpos=get_list("leftpos_p")
-        self.leftpos_s,self.leftpos_p=do_wilicox_sum_test(ref_leftpos,alt_leftpos,type="list")
+        # self.leftpos_s,self.leftpos_p=do_wilicox_sum_test(ref_leftpos,alt_leftpos,type="list")
+        self.leftpos_s,self.leftpos_p,self.leftpos_rbc=wilcoxon_with_rbc(ref_leftpos,alt_leftpos)
 
         ref_seqpos,alt_seqpos=get_list("seqpos")
-        self.seqpos_s,self.seqpos_p=do_wilicox_sum_test(ref_seqpos,alt_seqpos,type="list")
+        # self.seqpos_s,self.seqpos_p=do_wilicox_sum_test(ref_seqpos,alt_seqpos,type="list")
+        self.seqpos_s,self.seqpos_p,self.seqpos_rbc=wilcoxon_with_rbc(ref_seqpos,alt_seqpos)
 
         ref_querypos,alt_querypos=get_list("querypos")
-        self.querypos_s,self.querypos_p=do_wilicox_sum_test(ref_querypos,alt_querypos,type="list")
-        self.ref_querypos_list = ",".join([str(i) for i in ref_seqpos]); self.ref_querypos_num=len(set(ref_seqpos))
-        self.alt_querypos_list = ",".join([str(i) for i in alt_seqpos]); self.alt_querypos_num=len(set(alt_seqpos))
+        # self.querypos_s,self.querypos_p=do_wilicox_sum_test(ref_querypos,alt_querypos,type="list")
+        self.querypos_s,self.querypos_p,self.querypos_rbc=wilcoxon_with_rbc(ref_querypos,alt_querypos)
+
+        self.ref_querypos_list = ",".join([str(i) for i in ref_querypos]); self.ref_querypos_num=len(set(ref_querypos))
+        self.alt_querypos_list = ",".join([str(i) for i in alt_querypos]); self.alt_querypos_num=len(set(alt_querypos))
      
         left_ref_edist,left_alt_edist=get_list("left_read_edist")
         # print("left_ref_edist\n",set(left_ref_edist))
@@ -755,15 +975,61 @@ class Features:
         self.median_distance_to_end_remove_clip=refine_median(distance_list_remove_clip)
 
         ref_distance_to_end,alt_distance_to_end=get_list("distance_to_end")
-        self.distance_to_end_s,self.distance_to_end_p=do_wilicox_sum_test(ref_distance_to_end,alt_distance_to_end,type="list")
-        
+        # self.distance_to_end_s,self.distance_to_end_p=do_wilicox_sum_test(ref_distance_to_end,alt_distance_to_end,type="list")
+        self.distance_to_end_s,self.distance_to_end_p,self.distance_to_end_rbc=wilcoxon_with_rbc(ref_distance_to_end,alt_distance_to_end)
+
         ref_distance_to_end_by_UMI,alt_distance_to_end_by_UMI=get_list("UMI_end")
-        self.distance_to_end_by_UMI_s,self.distance_to_end_by_UMI_p=do_wilicox_sum_test(ref_distance_to_end_by_UMI,alt_distance_to_end_by_UMI,type="list")
+        self.UMI_end_s,self.UMI_end_p,self.UMI_end_rbc=wilcoxon_with_rbc(ref_distance_to_end_by_UMI,alt_distance_to_end_by_UMI)
+        # self.UMI_end_s,self.UMI_end_p=do_wilicox_sum_test(ref_distance_to_end_by_UMI,alt_distance_to_end_by_UMI,type="list")
+
+        self.ref_UMI_end_mean=refine_mean(ref_distance_to_end_by_UMI)
+        self.ref_UMI_end_median=refine_median(ref_distance_to_end_by_UMI)
+        self.alt_UMI_end_mean=refine_mean(alt_distance_to_end_by_UMI)
+        self.alt_UMI_end_median=refine_median(alt_distance_to_end_by_UMI)
+
+        ref_distance_to_end_remove_clip_by_UMI,alt_distance_to_end_remove_clip_by_UMI=get_list("UMI_end_remove_clip")
+        self.ref_UMI_end_mean_remove_clip = refine_mean(ref_distance_to_end_remove_clip_by_UMI)  # 修正变量名
+        self.ref_UMI_end_median_remove_clip = refine_median(ref_distance_to_end_remove_clip_by_UMI)  # 修正变量名
+        self.alt_UMI_end_mean_remove_clip = refine_mean(alt_distance_to_end_remove_clip_by_UMI)  # 修正变量名
+        self.alt_UMI_end_median_remove_clip = refine_median(alt_distance_to_end_remove_clip_by_UMI)  # 修正变量名
+        self.UMI_end_remove_clip_s,self.UMI_end_remove_clip_p,self.UMI_end_remove_clip_rbc=wilcoxon_with_rbc(ref_distance_to_end_remove_clip_by_UMI,alt_distance_to_end_remove_clip_by_UMI)
 
         ref_distance_to_end_remove_clip,alt_distance_to_end_remove_clip=get_list("distance_to_end_remove_clip")
+        # print(ref_distance_to_end_remove_clip,alt_distance_to_end_remove_clip)
         self.distance_to_end_remove_clip_s,self.distance_to_end_remove_clip_p=do_wilicox_sum_test(ref_distance_to_end_remove_clip,alt_distance_to_end_remove_clip,type="list")
-
+        # print(self.distance_to_end_remove_clip_s,self.distance_to_end_remove_clip_p)
         ## NOTE: save softclip_length and plot them
+        
+        ref_distance_to_end_per_UMI, alt_distance_to_end_per_UMI = get_list("per_UMI_end")
+        self.per_ref_UMI_end_mean = refine_mean(ref_distance_to_end_per_UMI)
+        self.per_ref_UMI_end_median = refine_median(ref_distance_to_end_per_UMI)
+        self.per_alt_UMI_end_mean = refine_mean(alt_distance_to_end_per_UMI)
+        self.per_alt_UMI_end_median = refine_median(alt_distance_to_end_per_UMI)
+        self.per_UMI_end_s, self.per_UMI_end_p, self.per_UMI_end_rbc = wilcoxon_with_rbc(ref_distance_to_end_per_UMI, alt_distance_to_end_per_UMI)
+
+        # per_UMI_end_remove_clip 相关计算
+        ref_distance_to_end_remove_clip_per_UMI, alt_distance_to_end_remove_clip_per_UMI = get_list("per_UMI_end_remove_clip")
+        self.per_ref_UMI_end_remove_clip_mean = refine_mean(ref_distance_to_end_remove_clip_per_UMI)  # 修正输入变量
+        self.per_ref_UMI_end_remove_clip_median = refine_median(ref_distance_to_end_remove_clip_per_UMI)  # 修正输入变量
+        self.per_alt_UMI_end_remove_clip_mean = refine_mean(alt_distance_to_end_remove_clip_per_UMI)  # 修正输入变量
+        self.per_alt_UMI_end_remove_clip_median = refine_median(alt_distance_to_end_remove_clip_per_UMI)  # 修正输入变量
+        self.per_UMI_end_remove_clip_s, self.per_UMI_end_remove_clip_p, self.per_UMI_end_remove_clip_rbc = wilcoxon_with_rbc(ref_distance_to_end_remove_clip_per_UMI, alt_distance_to_end_remove_clip_per_UMI)
+
+        # 获取 per_UMI_end_value 数据并计算统计量
+        ref_distance_to_end_value_per_UMI, alt_distance_to_end_value_per_UMI = get_list("per_UMI_end_value")
+        self.per_ref_UMI_end_value_mean = refine_mean(ref_distance_to_end_value_per_UMI)  # 修正变量名
+        self.per_ref_UMI_end_value_median = refine_median(ref_distance_to_end_value_per_UMI)  # 修正变量名
+        self.per_alt_UMI_end_value_mean = refine_mean(alt_distance_to_end_value_per_UMI)  # 修正变量名
+        self.per_alt_UMI_end_value_median = refine_median(alt_distance_to_end_value_per_UMI)  # 修正变量名
+
+        # 获取 per_UMI_end_remove_clip_value 数据并计算统计量
+        ref_distance_to_end_remove_clip_value_per_UMI, alt_distance_to_end_remove_clip_value_per_UMI = get_list("per_UMI_end_remove_clip_value")  # 统一变量名
+        self.per_ref_UMI_end_remove_clip_value_mean = refine_mean(ref_distance_to_end_remove_clip_value_per_UMI)  # 使用正确变量
+        self.per_ref_UMI_end_remove_clip_value_median = refine_median(ref_distance_to_end_remove_clip_value_per_UMI)  # 使用正确变量
+        self.per_alt_UMI_end_remove_clip_value_mean = refine_mean(alt_distance_to_end_remove_clip_value_per_UMI)  # 使用正确变量
+        self.per_alt_UMI_end_remove_clip_value_median = refine_median(alt_distance_to_end_remove_clip_value_per_UMI)  # 使用正确变量
+
+        
         ref_hardclip_length,alt_hardclip_length=get_list("hardclip_length")
         self.hardclip_length_s,self.hardclip_length_p=do_wilicox_sum_test(ref_hardclip_length,alt_hardclip_length,type="list")
         try:
@@ -778,15 +1044,21 @@ class Features:
             print(self.identifier, "dose not have hard_clip_info")
 
         ref_softclip_length,alt_softclip_length=get_list("softclip_length")
-        self.softclip_length_s,self.softclip_length_p=do_wilicox_sum_test(ref_softclip_length,alt_softclip_length,type="list")
-        try:
+        # self.softclip_length_s,self.softclip_length_p=do_wilicox_sum_test(ref_softclip_length,alt_softclip_length,type="list")
+        self.softclip_length_s,self.softclip_length_p,self.softclip_length_rbc=wilcoxon_with_rbc(ref_softclip_length,alt_softclip_length)
+        
+
+        try:    
             self.ref_softclip_prop=len([x for x in ref_softclip_length if x > 10])/len(ref_softclip_length)
             self.alt_softclip_prop=len([x for x in alt_softclip_length if x > 10])/len(alt_softclip_length)
             # self.ref_softclip_length,self.alt_softclip_length=ref_softclip_length,alt_softclip_length
             ref_soft_count=len([x for x in ref_softclip_length if x > 10]); ref_no_soft_count=len(ref_softclip_length)-ref_soft_count
             alt_soft_count=len([x for x in alt_softclip_length if x > 10]); alt_no_soft_count=len(alt_softclip_length)-alt_soft_count
             self.softclip_prop_odds, self.softclip_prop_p=scipy.stats.fisher_exact([[alt_soft_count, alt_no_soft_count ],[ref_soft_count, ref_no_soft_count]])
-            
+
+            all_softclip=ref_softclip_length+alt_softclip_length
+            self.softclip_prop=len([x for x in all_softclip if x > 10])/len(all_softclip) if len(all_softclip)!=0 else "NA"
+
         except:
             print(self.identifier, "dose not have soft_clip_info")
         # def simple_to_get_list_float(read_info_dict,ref_allele,alt_allele,var):
@@ -798,6 +1070,7 @@ class Features:
         # get_list_float=partial(simple_to_get_list_float,read_info_dict,self.ref,self.alt)
         #UMI_consistence_prop
         # _,alt_UMI_consistence=get_list_float("UMI_consistence_prop")
+        ##### UMI consistency
         alt_UMI_consistence=0; total_UMI_contain_alt=0; alt_consistence_hard=0; alt_consistence_soft=0
         for allele in self.alt.split(","):
             for k in read_info_dict[allele]["UMI_consistence_prop"]:
@@ -810,17 +1083,42 @@ class Features:
                     elif k>=0.75:
                         alt_consistence_soft+=1
         try:
-            alt_UMI_consistence_prop=alt_UMI_consistence/total_UMI_contain_alt
-            alt_consistence_hard_prop=alt_consistence_hard/total_UMI_contain_alt
-            alt_consistence_soft_prop=alt_consistence_soft/total_UMI_contain_alt
-            self.alt_UMI_consistence_prop=alt_UMI_consistence_prop
-            self.alt_consistence_hard_prop=alt_consistence_hard_prop
-            self.alt_consistence_soft_prop=alt_consistence_soft_prop
+            alt_UMI_avg_consistence=alt_UMI_consistence/total_UMI_contain_alt
+            alt_consistent_UMI_prop_strict=alt_consistence_hard/total_UMI_contain_alt
+            alt_consistent_UMI_prop_relaxed=alt_consistence_soft/total_UMI_contain_alt
+            self.alt_UMI_avg_consistence=alt_UMI_avg_consistence
+            self.alt_consistent_UMI_prop_strict=alt_consistent_UMI_prop_strict
+            self.alt_consistent_UMI_prop_relaxed=alt_consistent_UMI_prop_relaxed
         except:
             print(self.identifier,"is wrong in consistence.")
+
+        ##### UMI consistency remove single read
+        alt_UMI_consistence_remove_single_read=0; total_UMI_contain_alt_remove_single_read=0
+        alt_consistence_hard_remove_single_read=0; alt_consistence_soft_remove_single_read=0
+        for allele in self.alt.split(","):
+            for k in read_info_dict[allele]["UMI_consistence_prop_remove_single_read"]:
+                if k !=0.0:
+                    alt_UMI_consistence_remove_single_read+=k
+                    total_UMI_contain_alt_remove_single_read+=1
+                    if k==1.0:
+                        alt_consistence_hard_remove_single_read+=1
+                        alt_consistence_soft_remove_single_read+=1
+                    elif k>=0.75:
+                        alt_consistence_soft_remove_single_read+=1
+        try:
+            alt_UMI_avg_consistence_remove_single_read=alt_UMI_consistence_remove_single_read/total_UMI_contain_alt_remove_single_read
+            alt_consistent_UMI_prop_relaxed_remove_single_read=alt_consistence_soft_remove_single_read/total_UMI_contain_alt_remove_single_read
+            alt_consistent_UMI_prop_strict_remove_single_read=alt_consistence_hard_remove_single_read/total_UMI_contain_alt_remove_single_read
+            self.alt_UMI_avg_consistence_remove_single_read=alt_UMI_avg_consistence_remove_single_read
+            self.alt_consistent_UMI_prop_strict_remove_single_read=alt_consistent_UMI_prop_strict_remove_single_read
+            self.alt_consistent_UMI_prop_relaxed_remove_single_read=alt_consistent_UMI_prop_relaxed_remove_single_read
+        except:
+            print(self.identifier,"is wrong in consistence remove single read.")
+
         try:
             ref_read_number_perUMI,alt_read_number_perUMI=get_list("read_number_per_UMI")
-            self.read_number_s,self.read_number_p=do_wilicox_sum_test(ref_read_number_perUMI,alt_read_number_perUMI,type="list")
+            self.read_number_s,self.read_number_p,self.read_number_rbc=wilcoxon_with_rbc(ref_read_number_perUMI,alt_read_number_perUMI)
+            # self.read_number_s,self.read_number_p=do_wilicox_sum_test(ref_read_number_perUMI,alt_read_number_perUMI,type="list")
             self.ref_read_number_perUMI_median=refine_median(ref_read_number_perUMI)
             self.alt_read_number_perUMI_median=refine_median(alt_read_number_perUMI)
             self.ref_read_number_perUMI_max=max(ref_read_number_perUMI)
@@ -829,18 +1127,32 @@ class Features:
             print(self.identifier,"does not have perUMI info")
         
         try:
-            ref_read_number_per_spot,alt_read_number_per_spot=get_list("read_number_per_spot")
+            ref_read_number_per_spot,alt_read_number_per_spot=get_list("total_read_number_per_spot")
             self.read_number_per_spot_s,self.read_number_per_spot_p = do_wilicox_sum_test(ref_read_number_per_spot, alt_read_number_per_spot,method="two-sided",type="list")
         except:
-            print(self.identifier,"does not have read_number_per_spot info")
+            print(self.identifier,"does not have total_read_number_per_spot info")
 
         try:
-            ref_spot_dp_list, alt_spot_dp_list=get_list("UMI_number_per_spot")
+            ref_spot_dp_list, alt_spot_dp_list=get_list("total_UMI_number_per_spot")
             self.UMI_number_per_spot_s,self.UMI_number_per_spot_p = do_wilicox_sum_test(ref_spot_dp_list, alt_spot_dp_list,method="two-sided",type="list")
             self.ref_UMI_number_per_spot_median,self.alt_UMI_number_per_spot_median = np.median(ref_spot_dp_list),np.median(alt_spot_dp_list)
-            self.ref_UMI_number_per_spot_max,self.alt_UMI_number_per_spot_max = max(ref_spot_dp_list),max(alt_spot_dp_list)
+            self.ref_UMI_number_per_spot_max,self.alt_UMI_number_per_spot_max = max([0]+ref_spot_dp_list),max([0]+alt_spot_dp_list)
         except:
-            print(self.identifier,"does not have UMI_number_per_spot info")
+            print(self.identifier,"does not have total_UMI_number_per_spot info")
+        
+        alt_umi_number=[float(k) for allele in self.alt.split(",") for k in read_info_dict[allele]["UMI_number_per_spot"]]
+        ref_umi_number=[float(k) for allele in self.ref.split(",") for k in read_info_dict[allele]["UMI_number_per_spot"]]
+
+        umi_depth=[a+t+c+g for a,t,c,g in zip(read_info_dict["A"]["UMI_number_per_spot"], \
+                                                read_info_dict["T"]["UMI_number_per_spot"], \
+                                                read_info_dict["C"]["UMI_number_per_spot"], \
+                                                read_info_dict["G"]["UMI_number_per_spot"])]
+        self.UMI_number_per_spot_median=refine_median(umi_depth)
+        self.UMI_number_per_spot_mean=refine_mean(umi_depth)
+        self.alt_vs_total_dp_paired_wilcoxon_rbc=calculate_rbc_for_paired_wilcoxon(umi_depth,alt_umi_number)
+        self.downsample_consensus_UMI_count=sum([float(k) for allele in "ATCG" for k in read_info_dict[allele]["UMI_number_per_spot"]])
+        self.downsample_consensus_alt_allele_count=sum(alt_umi_number)
+        
         # alt_consistence_prop=sum(alt_UMI_consistence)/sum([1 for i in read_info_dict[self.alt]["UMI_consistence_prop"] if i !=0.0])
         # total_UMI_contain_alt=[i for i in read_info_dict[self.alt]["UMI_consistence_prop"] if i !=0.0]
         # alt_consistence_hard=sum([1 for i in total_UMI_contain_alt if i ==1.0])/len(total_UMI_contain_alt)
@@ -917,30 +1229,69 @@ class Features:
         alt_dp_list=[read_info_dict[allele]["dp"] for allele in self.alt.split(",")]
         self.SGB=calc_SegBias_for_one_sample(sum(ref_dp_list),sum(alt_dp_list))
 
-        self.alt_SpotNum=read_info_dict[self.alt]["GenoSpotNum"]
+        self.downsample_alt_spot_num=read_info_dict[self.alt]["GenoSpotNum"]
+        if self.downsample_spot_num=="no":
+            self.downsample_spot_num=int(read_info_dict[self.alt]["GenoSpotNum"])+int(read_info_dict[self.ref[0]]["GenoSpotNum"])
+        # print(read_info_dict[self.alt]["vaf_spot"])
+        self.downsample_mut_spots_vaf_mean=refine_mean(read_info_dict[self.alt]["vaf_spot"])
+        self.downsample_mut_spots_vaf_median=refine_median(read_info_dict[self.alt]["vaf_spot"])
+        vaf_values = np.array(read_info_dict[self.alt]["vaf_spot"])  # 确保是数组
+        self.downsample_only_alt_mutant_spot_prop = (vaf_values == 1).mean()
+
+        # p_list=[self.baseq_p,self.ref_baseq1b_p,self.alt_baseq1b_p, \
+        #         self.querypos_p,self.leftpos_p,self.seqpos_p, \
+        #         self.distance_to_end_p,self.UMI_end_p,self.UMI_end_remove_clip_p, \
+        #         self.mismatches_p,self.mapq_p,self.read_number_p,self.softclip_length_p]
+        
+        p_list=[self.baseq_p,self.ref_baseq1b_p,self.alt_baseq1b_p, \
+                self.querypos_p,self.leftpos_p,self.seqpos_p, \
+                self.distance_to_end_p, self.UMI_end_p,self.UMI_end_remove_clip_p, \
+                self.per_UMI_end_p,self.per_UMI_end_remove_clip_p, \
+                self.mismatches_p,self.mapq_p,self.read_number_p,self.softclip_length_p]
+        _, p_adj_list, _, _ = smm.multipletests(p_list, method='fdr_bh')
+        # self.baseq_p_adj,self.ref_baseq1b_p_adj,self.alt_baseq1b_p_adj, \
+        # self.querypos_p_adj,self.leftpos_p_adj,self.seqpos_p_adj, \
+        # self.distance_to_end_p_adj,self.UMI_end_p_adj,self.UMI_end_remove_clip_p_adj, \
+        # self.mismatches_p_adj,self.mapq_p_adj,self.read_number_p_adj,self.softclip_length_p_adj=p_adj_list
+        
+        self.baseq_p_adj,self.ref_baseq1b_p_adj,self.alt_baseq1b_p_adj, \
+        self.querypos_p_adj,self.leftpos_p_adj,self.seqpos_p_adj, \
+        self.distance_to_end_p_adj,self.UMI_end_p_adj,self.UMI_end_remove_clip_p_adj, \
+        self.per_UMI_end_p_adj,self.per_UMI_end_remove_clip_p_adj, \
+        self.mismatches_p_adj,self.mapq_p_adj,self.read_number_p_adj,self.softclip_length_p_adj=p_adj_list
 
 
-    def add_context_info(self,GCcontent,DNAMutationType,RNAMutationType, equal_to_previous_bases, cause_ploy_alt):
+    def add_context_info(self,GCcontent,DNAMutationType,RNAMutationType, equal_to_previous_bases, cause_poly_alt,context_10bp):
         # self.context=context
         self.GCcontent=GCcontent
         self.DNAMutationType=DNAMutationType
         self.RNAMutationType=RNAMutationType
         self.equal_to_previous_bases=equal_to_previous_bases
-        self.cause_ploy_alt=cause_ploy_alt
+        self.cause_poly_alt=cause_poly_alt
+        self.context_10bp=context_10bp
 
-    def add_info_from_barcode_dir(self, ref_spot_dp_list, alt_spot_dp_list):
-        self.UMI_number_per_spot_s,self.UMI_number_per_spot_p = do_wilicox_sum_test(ref_spot_dp_list, alt_spot_dp_list,method="two-sided",type="list")
+    def add_info_from_barcode_dir(self, ref_vaf_list, alt_vaf_list):
+        self.alt_spot_num=len(alt_vaf_list)
+        # self.spot_num=len(alt_vaf_list)+len(ref_vaf_list)
+
+        self.mut_spots_vaf_mean=refine_mean(alt_vaf_list)
+        self.mut_spots_vaf_median=refine_median(alt_vaf_list)
+        vaf_values = np.array(alt_vaf_list)  # 确保是数组
+        self.only_alt_mutant_spot_prop = (vaf_values == 1).mean()
+
+        # self.UMI_number_per_spot_s,self.UMI_number_per_spot_p = do_wilicox_sum_test(ref_spot_dp_list, alt_spot_dp_list,method="two-sided",type="list")
+        # self.ref_UMI_number_per_spot_median,self.alt_UMI_number_per_spot_median = np.median(ref_spot_dp_list),np.median(alt_spot_dp_list)
+        # self.ref_UMI_number_per_spot_max,self.alt_UMI_number_per_spot_max = max(ref_spot_dp_list),max(alt_spot_dp_list)
+
 
     def add_prior(self, prior_info):
         infos=prior_info.strip().split("\t")
-        # print(infos)
         # print("ATCG".index(self.ref))
         if "," not in self.ref:
             self.fref=str(infos[3+"ATCG".index(self.ref)])
         else:
             self.fref=infos[3+"ATCG".index(self.ref[0])] + "," + infos[3+"ATCG".index(self.ref[-1])]
         self.falt=infos[3+"ATCG".index(self.alt)]
-        # print(self.fref,self.falt)
 
     def expand_features(self):
         """
@@ -958,13 +1309,12 @@ class Features:
 
         if self.consensus_read_count!="no" and self.ref!="no" and self.alt!="no":
             other_count_dict={base:int(count) for base,count in zip("ATCG",self.consensus_read_count.split(",")) if base not in self.ref+self.alt}
-            # print(self.consensus_read_count,"===", other_count_dict)
             alt2_count_consensus=max(list(other_count_dict.values()),default=0)
             consensus_dp=sum([int(i) for i in self.consensus_read_count.split(",")])
-            self.alt2_proportion_consensus=alt2_count_consensus/consensus_dp
-            self.dp_consensus=consensus_dp
-            self.alt_dp_consensus=self.consensus_read_count.split(",")["ATCG".index(self.alt)]
-            self.vaf_consensus=int(self.alt_dp_consensus)/self.dp_consensus
+            self.consensus_alt2_proportion=alt2_count_consensus/consensus_dp
+            self.consensus_UMI_count=consensus_dp
+            self.consensus_alt_allele_count=self.consensus_read_count.split(",")["ATCG".index(self.alt)]
+            self.consensus_vaf=int(self.consensus_alt_allele_count)/self.consensus_UMI_count
 
         if self.strand!=[]:
             self.strand=list(set(self.strand))
@@ -983,6 +1333,9 @@ class Features:
             'leftpos_s': self.leftpos_s,
             'seqpos_p': handle_p_value_log10(self.seqpos_p),
             'seqpos_s': self.seqpos_s,
+            'querypos_rbc':self.querypos_rbc,
+            'leftpos_rbc':self.leftpos_rbc,
+            'seqpos_rbc':self.seqpos_rbc,
             'mean_distance_to_end': self.mean_distance_to_end,
             'median_distance_to_end':self.median_distance_to_end,
             'mean_distance_to_end_remove_clip':self.mean_distance_to_end_remove_clip,
@@ -991,67 +1344,136 @@ class Features:
             'distance_to_end_s':self.distance_to_end_s,
             'distance_to_end_remove_clip_p':handle_p_value_log10(self.distance_to_end_remove_clip_p),
             'distance_to_end_remove_clip_s':self.distance_to_end_remove_clip_s,
-            # 'querypos_p': (self.querypos_p),
-            # 'leftpos_p': (self.leftpos_p),
-            # 'seqpos_p': (self.seqpos_p),
-            # 'distanceBoundary': self.distanceBoundary,
+            # UMI_end 
+            'UMI_end_p':handle_p_value_log10(self.UMI_end_p),
+            'UMI_end_s':self.UMI_end_s,
+            'UMI_end_rbc':self.UMI_end_rbc,
+            'ref_UMI_end_mean':self.ref_UMI_end_mean,
+            'ref_UMI_end_median':self.ref_UMI_end_median,
+            'alt_UMI_end_mean':self.alt_UMI_end_mean,
+            'alt_UMI_end_median':self.alt_UMI_end_median,
+            # UMI_end_remove_clip 
+            'ref_UMI_end_mean_remove_clip':self.ref_UMI_end_mean_remove_clip,
+            'ref_UMI_end_median_remove_clip':self.ref_UMI_end_median_remove_clip,
+            'alt_UMI_end_mean_remove_clip':self.alt_UMI_end_mean_remove_clip,
+            'alt_UMI_end_median_remove_clip':self.alt_UMI_end_median_remove_clip,
+            'UMI_end_remove_clip_s':self.UMI_end_remove_clip_s,
+            'UMI_end_remove_clip_p':handle_p_value_log10(self.UMI_end_remove_clip_p),
+            'UMI_end_remove_clip_rbc':self.UMI_end_remove_clip_rbc,
+            # per_UMI_end 
+            'per_UMI_end_s':self.per_UMI_end_s,
+            'per_UMI_end_p':handle_p_value_log10(self.per_UMI_end_p),
+            'per_UMI_end_rbc':self.per_UMI_end_rbc, 
+            'per_ref_UMI_end_mean':self.per_ref_UMI_end_mean,
+            'per_ref_UMI_end_median':self.per_ref_UMI_end_median,
+            'per_alt_UMI_end_mean':self.per_alt_UMI_end_mean,
+            'per_alt_UMI_end_median':self.per_alt_UMI_end_median,
+            'per_ref_UMI_end_remove_clip_mean':self.per_ref_UMI_end_remove_clip_mean,
+            'per_ref_UMI_end_remove_clip_median':self.per_ref_UMI_end_remove_clip_median,
+            'per_alt_UMI_end_remove_clip_mean':self.per_alt_UMI_end_remove_clip_mean,
+            'per_alt_UMI_end_remove_clip_median':self.per_alt_UMI_end_remove_clip_median,
+
+            # per_UMI_end_remove_clip 
+            'per_UMI_end_remove_clip_s':self.per_UMI_end_remove_clip_s,
+            'per_UMI_end_remove_clip_p':handle_p_value_log10(self.per_UMI_end_remove_clip_p),
+            'per_UMI_end_remove_clip_rbc':self.per_UMI_end_remove_clip_rbc,
+            'per_ref_UMI_end_mean':self.per_ref_UMI_end_mean,
+            'per_ref_UMI_end_median':self.per_ref_UMI_end_median,
+            'per_alt_UMI_end_mean':self.per_alt_UMI_end_mean,
+            'per_alt_UMI_end_median':self.per_alt_UMI_end_median,
+            # per_UMI_end_value 
+            'per_ref_UMI_end_value_mean':self.per_ref_UMI_end_value_mean,
+            'per_ref_UMI_end_value_median':self.per_ref_UMI_end_value_median,
+            'per_alt_UMI_end_value_mean':self.per_alt_UMI_end_value_mean,
+            'per_alt_UMI_end_value_median':self.per_alt_UMI_end_value_median,
+
+            # per_UMI_end_remove_clip_value 
+            'per_ref_UMI_end_remove_clip_value_mean':self.per_ref_UMI_end_remove_clip_value_mean,
+            'per_ref_UMI_end_remove_clip_value_median':self.per_ref_UMI_end_remove_clip_value_median,
+            'per_alt_UMI_end_remove_clip_value_mean':self.per_alt_UMI_end_remove_clip_value_mean,
+            'per_alt_UMI_end_remove_clip_value_median':self.per_alt_UMI_end_remove_clip_value_median,
+
+            'mut_spots_vaf_mean':self.mut_spots_vaf_mean,
+            'mut_spots_vaf_median':self.mut_spots_vaf_median,
+            'only_alt_mutant_spot_prop':self.only_alt_mutant_spot_prop,
+            'downsample_mut_spots_vaf_mean':self.downsample_mut_spots_vaf_mean,
+            'downsample_mut_spots_vaf_median':self.downsample_mut_spots_vaf_median,
+            'downsample_only_alt_mutant_spot_prop':self.downsample_only_alt_mutant_spot_prop,
 
             'baseq_p': handle_p_value_log10(self.baseq_p),
             'baseq_s': self.baseq_s,
+            'baseq_rbc': self.baseq_rbc,
             'ref_baseq1b_p': handle_p_value_log10(self.ref_baseq1b_p),
             'ref_baseq1b_s': self.ref_baseq1b_s,
+            'ref_baseq1b_rbc': self.ref_baseq1b_rbc,
+            'alt_baseq1b_rbc':self.alt_baseq1b_rbc,
             'alt_baseq1b_p': handle_p_value_log10(self.alt_baseq1b_p),
             'alt_baseq1b_s': self.alt_baseq1b_s,
             # 'context': self.context,
             'DNAMutationType': self.DNAMutationType,
             'RNAMutationType': self.RNAMutationType,
             'equal_to_previous_bases': self.equal_to_previous_bases,
-            'cause_ploy_alt': self.cause_ploy_alt,
-            'mapper_odds': handle_p_value_log10(self.mapper_odds),
-            'mapper_p': handle_p_value_log10(self.mapper_p),
+            'cause_poly_alt': self.cause_poly_alt,
+            'multi_mapper_odds': self.multi_mapper_odds,
+            'multi_mapper_p': handle_p_value_log10(self.multi_mapper_p),
             'ref_multi_map_prop': self.ref_multi_map_prop,
             'alt_multi_map_prop': self.alt_multi_map_prop,
+            'multi_map_prop':self.multi_map_prop,
             'ref_mismatches_mean': self.ref_mismatches_mean,
             'alt_mismatches_mean': self.alt_mismatches_mean,
             'mismatches_p': handle_p_value_log10(self.mismatches_p),
+            'mismatches_rbc':self.mismatches_rbc,
             'mismatches_s': self.mismatches_s,
-            'sb_p': handle_p_value_log10(self.sb_p),
-            'sb_odds': handle_p_value_log10(self.sb_odds),
+            'strand_bias_p': handle_p_value_log10(self.strand_bias_p),
+            'strand_bias_odds': self.strand_bias_odds,
             'mapq_p': handle_p_value_log10(self.mapq_p),
+            'mapq_mean':self.mapq_mean,
+            'ref_mapq_mean':self.ref_mapq_mean,
+            'alt_mapq_mean':self.alt_mapq_mean,
             'mapq_s': self.mapq_s,
+            'mapq_rbc': self.mapq_rbc,
             'mapq_difference': self.mapq_difference,
-            'dp': self.dp,
-            'alt_SpotNum': self.alt_SpotNum,
-            'alt_dp': self.alt_dp,
+            'read_depth': self.read_depth,
+            'alt_spot_num': self.alt_spot_num,
+            # 'alt_allele_count': self.alt_allele_count,
+            'ref_allele_count':self.ref_allele_count,
+            'alt_allele_count':self.alt_allele_count,
+            'alt2_allele_count':self.alt2_allele_count,
             'vaf': self.vaf,
-            'dp_consensus':self.dp_consensus,
-            'alt_dp_consensus':self.alt_dp_consensus,
-            'vaf_consensus': self.vaf_consensus,
+            'consensus_UMI_count':self.consensus_UMI_count,
+            'consensus_alt_allele_count':self.consensus_alt_allele_count,
+            'consensus_vaf': self.consensus_vaf,
             'VDB': self.VDB,
             'RPBZ':self.RPBZ,
             'SGB':self.SGB,
             # 'dpUMI_p': self.dpUMI_p,
             # 'dp_diff': self.feadp_diffture,
-            "reverse_dp": self.reverse_dp,
-            "forward_dp": self.forward_dp,
-            "alt_reverse_dp": self.alt_reverse_dp,
-            "alt_forward_dp": self.alt_forward_dp,
+            "read_depth_reverse": self.read_depth_reverse,
+            "read_depth_forward": self.read_depth_forward,
+            "alt_allele_count_reverse": self.alt_allele_count_reverse,
+            "alt_allele_count_forward": self.alt_allele_count_forward,
             "major_read_strand": self.major_read_strand,
             'ref_hardclip_prop': self.ref_hardclip_prop,
             'alt_hardclip_prop': self.alt_hardclip_prop,
             'ref_softclip_prop': self.ref_softclip_prop,
             'alt_softclip_prop': self.alt_softclip_prop,
+            'softclip_prop':self.softclip_prop,
             'hardclip_length_s': self.hardclip_length_s,
             'hardclip_length_p': handle_p_value_log10(self.hardclip_length_p),
             'hardclip_prop_odds': self.hardclip_prop_odds,
             'hardclip_prop_p': self.hardclip_prop_p,
             'softclip_length_s': self.softclip_length_s,
             'softclip_length_p': handle_p_value_log10(self.softclip_length_p),
+            'softclip_length_rbc':self.softclip_length_rbc,
             'softclip_prop_odds': self.softclip_prop_odds,
             'softclip_prop_p': handle_p_value_log10(self.softclip_prop_p),
-            'indel_proportion_SNPonly': self.indel_proportion_SNPonly,
+            'indel_proportion_for_site': self.indel_proportion_for_site,
+            'reads_with_indel_odds':self.reads_with_indel_odds,
+            'reads_with_indel_p':self.reads_with_indel_p,
             'alt2_proportion': self.alt2_proportion,
-            'alt2_proportion_consensus': self.alt2_proportion_consensus,
+            'consensus_alt2_proportion': self.consensus_alt2_proportion,
+            'UMI_number_per_spot_median': self.UMI_number_per_spot_median,
+            'UMI_number_per_spot_mean': self.UMI_number_per_spot_mean,
             'UMI_number_per_spot_s': self.UMI_number_per_spot_s,
             'UMI_number_per_spot_p': handle_p_value_log10(self.UMI_number_per_spot_p),
             'read_number_per_spot_s': self.read_number_per_spot_s,
@@ -1060,27 +1482,32 @@ class Features:
             'alt_UMI_number_per_spot_max': self.alt_UMI_number_per_spot_max,
             'ref_UMI_number_per_spot_median': self.ref_UMI_number_per_spot_median,
             'alt_UMI_number_per_spot_median': self.alt_UMI_number_per_spot_median,
+            'alt_vs_total_dp_paired_wilcoxon_rbc':self.alt_vs_total_dp_paired_wilcoxon_rbc,
             # 'nearSNV': self.nearSNV,
             # 'nearIND_DEL': self.nearIND_DEL,
             # 'nearIND_DEL_length': self.nearIND_DEL_length,
             # 'nearIND_DEL_distance': self.nearIND_DEL_distance,
             # 'splicing': self.splicing,
             # UMI consistence:
-            'alt_UMI_consistence_prop': self.alt_UMI_consistence_prop,
-            'alt_consistence_hard_prop': self.alt_consistence_hard_prop,
-            'alt_consistence_soft_prop': self.alt_consistence_soft_prop,
+            'alt_UMI_avg_consistence': self.alt_UMI_avg_consistence,
+            'alt_consistent_UMI_prop_strict': self.alt_consistent_UMI_prop_strict,
+            'alt_consistent_UMI_prop_relaxed': self.alt_consistent_UMI_prop_relaxed,
+            
+            'alt_UMI_avg_consistence_remove_single_read': self.alt_UMI_avg_consistence_remove_single_read,
+            'alt_consistent_UMI_prop_strict_remove_single_read': self.alt_consistent_UMI_prop_strict_remove_single_read,
+            'alt_consistent_UMI_prop_relaxed_remove_single_read': self.alt_consistent_UMI_prop_relaxed_remove_single_read,
+
             'read_number_p': handle_p_value_log10(self.read_number_p),
             'read_number_s':self.read_number_s,
+            'read_number_rbc':self.read_number_rbc,
             'ref_read_number_perUMI_median':self.ref_read_number_perUMI_median,
             'alt_read_number_perUMI_median':self.alt_read_number_perUMI_median,
             'ref_read_number_perUMI_max':self.ref_read_number_perUMI_max,
             'alt_read_number_perUMI_max':self.alt_read_number_perUMI_max,
-            'ref_UMI_number_per_spot_max': self.ref_UMI_number_per_spot_max,
-            'alt_UMI_number_per_spot_max': self.alt_UMI_number_per_spot_max,
-            'ref_UMI_number_per_spot_median': self.ref_UMI_number_per_spot_median,
-            'alt_UMI_number_per_spot_median': self.alt_UMI_number_per_spot_median,
+
             # site info
-            'spotNum': self.spotNum,
+            'spot_num': self.spot_num,
+            'downsample_spot_num': self.downsample_spot_num,
             'combine_nearest_phase_haplotype':self.combine_nearest_phase_haplotype,
             'combine_nearest_info_mutant_prop':self.combine_nearest_info_mutant_prop,
             'combine_nearest_discordant_prop':self.combine_nearest_discordant_prop,
@@ -1104,17 +1531,18 @@ class Features:
             'mappabilityScore': self.mappability_score,
             'GCcontent': self.GCcontent,
             'gene_type': self.gene_type,
-            'anno_gene': self.anno_gene ,
-            'anno': self.anno,
+            'gene_anno': self.gene_anno ,
+            'variant_anno': self.variant_anno,
+            'context_10bp': self.context_10bp,
             # 'func_anno': self.func_anno,
             # 'RNAediting': self.RNAediting,
             # 'GeneNumber': self.GeneNumber,
-            'geneStrand': self.major_read_strand,
+            'gene_strand': self.major_read_strand,
             'distanceExon': self.distanceExon,
             # 'distanceExonIgnoreStrand':self.distanceExonIgnoreStrand,
             'AFind': self.AFind,
-            'mean_AFspot': self.mean_AFspot,
-            'max_AFspot': self.max_AFspot,
+            'all_spots_vaf_mean': self.all_spots_vaf_mean,
+            'all_spots_vaf_max': self.all_spots_vaf_max,
 
             'vaf_cluster_mean':self.vaf_cluster_mean,
             'vaf_cluster_std_dev':self.vaf_cluster_std_dev,
@@ -1130,18 +1558,266 @@ class Features:
             # 'refhom_likelihood': self.refhom_likelihood,
 
             # spatial related
-            'r2': self.r2,
-            'wilcoxon_p':handle_p_value_log10(self.wilcoxon_p),
-            'wilcoxon_s':self.wilcoxon_s,
-            'KS_p': handle_p_value_log10(self.KS_p),
-            'KS_s': self.KS_s,
-            'MI_p': handle_p_value_log10(self.MI_p),
-            'MI_s': self.MI_s,
-            'sf_test_sig':self.test_sig,
+            'alt_vs_total_dp_r2': self.alt_vs_total_dp_r2,
+            'alt_vs_total_dp_paired_wilcoxon_p':handle_p_value_log10(self.alt_vs_total_dp_paired_wilcoxon_p),
+            'alt_vs_total_dp_paired_wilcoxon_s':self.alt_vs_total_dp_paired_wilcoxon_s,
+            'mut_vs_nonmut_spots_KS_p': handle_p_value_log10(self.mut_vs_nonmut_spots_KS_p),
+            'mut_vs_nonmut_spots_KS_s': self.mut_vs_nonmut_spots_KS_s,
+            'mut_vs_nonmut_spots_MI_p': handle_p_value_log10(self.mut_vs_nonmut_spots_MI_p),
+            'mut_vs_nonmut_spots_MI_s': self.mut_vs_nonmut_spots_MI_s,
+            'pass_spatial_test':self.test_sig,
             'mutant_rate': self.mutant_rate,
-            'mut_rate_prob': self.mutant_rate_prob,
-            'mut_rate_likelihood':self.mutant_rate_likelihood,
-            'mut_rate_vaf':self.mutant_rate_vaf,
+            'mut_spots_prop_by_probablity': self.mutant_rate_prob,
+            'mut_spots_prop_by_likelihood':self.mutant_rate_likelihood,
+            'mut_spots_prop_by_vaf':self.mutant_rate_vaf,
+            'outlier_clusters': self.outlier_clusters,
+            'outlier_vaf': self.outlier_vaf,
+            'outlier_MI_p': handle_p_value_log10(self.outlier_moranI_pvalue),
+            'outlier_MI_s': self.outlier_moranI_stat,
+            'num_outlier_cluster': self.num_outlier_cluster,
+
+            "ref_ins_major_prop": self.ref_ins_major_prop,
+            # 'ref_querypos_list':self.ref_querypos_list,
+            'ref_querypos_num':self.ref_querypos_num,
+            # 'alt_querypos_list':self.alt_querypos_list,
+            'alt_querypos_num':self.alt_querypos_num,
+
+            'left_ref_querypos_num_remove_clip':self.left_ref_querypos_num_remove_clip,
+            'left_alt_querypos_num_remove_clip':self.left_alt_querypos_num_remove_clip,
+
+            'right_ref_querypos_num_remove_clip':self.right_ref_querypos_num_remove_clip,
+            'right_alt_querypos_num_remove_clip':self.right_alt_querypos_num_remove_clip,
+
+            'fref':self.fref,
+            'falt':self.falt,
+            
+            'baseq_p_adj':handle_p_value_log10(self.baseq_p_adj),
+            'ref_baseq1b_p_adj':handle_p_value_log10(self.ref_baseq1b_p_adj),
+            'alt_baseq1b_p_adj':handle_p_value_log10(self.alt_baseq1b_p_adj),
+            'querypos_p_adj':handle_p_value_log10(self.querypos_p_adj),
+            'leftpos_p_adj':handle_p_value_log10(self.leftpos_p_adj),
+            'seqpos_p_adj':handle_p_value_log10(self.seqpos_p_adj),
+            'distance_to_end_p_adj':handle_p_value_log10(self.distance_to_end_p_adj),
+            'UMI_end_p_adj':handle_p_value_log10(self.UMI_end_p_adj),
+            'UMI_end_remove_clip_p_adj':handle_p_value_log10(self.UMI_end_remove_clip_p_adj),
+            'per_UMI_end_p_adj':handle_p_value_log10(self.per_UMI_end_p_adj),
+            'per_UMI_end_remove_clip_p_adj':handle_p_value_log10(self.per_UMI_end_remove_clip_p_adj),
+            'mismatches_p_adj':handle_p_value_log10(self.mismatches_p_adj),
+            'mapq_p_adj':handle_p_value_log10(self.mapq_p_adj),
+            'read_number_p_adj':handle_p_value_log10(self.read_number_p_adj),
+            'softclip_length_p_adj':handle_p_value_log10(self.softclip_length_p_adj)
+            # 'muts_in_cluster_p': handle_p_value_log10(self.muts_in_cluster_p),
+            # 'muts_in_cluster_s': self.muts_in_cluster_s
+        }
+
+        for key in back_dict.keys():
+            value_to_str=back_dict[key]
+            if type(back_dict[key])==list:
+                value_to_str=",".join([str(i) for i in back_dict[key]])
+                if value_to_str=="":
+                    value_to_str="no"
+            if back_dict[key]=="":
+                value_to_str="no"
+
+            back_dict[key]=value_to_str
+
+        return back_dict
+    
+    def test_values(self):
+        test_dict={
+            'identifier': self.identifier,
+            # read level
+            'querypos_p': handle_p_value_log10(self.querypos_p),
+            'querypos_s': self.querypos_s,
+            'leftpos_p': handle_p_value_log10(self.leftpos_p),
+            'leftpos_s': self.leftpos_s,
+            'seqpos_p': handle_p_value_log10(self.seqpos_p),
+            'seqpos_s': self.seqpos_s,
+            'querypos_rbc':self.querypos_rbc,
+            'leftpos_rbc':self.leftpos_rbc,
+            'seqpos_rbc':self.seqpos_rbc,
+            'mean_distance_to_end': self.mean_distance_to_end,
+            'median_distance_to_end':self.median_distance_to_end,
+            'mean_distance_to_end_remove_clip':self.mean_distance_to_end_remove_clip,
+            'median_distance_to_end_remove_clip':self.median_distance_to_end_remove_clip,
+            'distance_to_end_p':handle_p_value_log10(self.distance_to_end_p),
+            'distance_to_end_s':self.distance_to_end_s,
+            'distance_to_end_remove_clip_p':handle_p_value_log10(self.distance_to_end_remove_clip_p),
+            'distance_to_end_remove_clip_s':self.distance_to_end_remove_clip_s,
+            'UMI_end_p':handle_p_value_log10(self.UMI_end_p),
+            'UMI_end_s':self.UMI_end_s,
+            'UMI_end_rbc':self.UMI_end_rbc,
+            'UMI_end_remove_clip_s':self.UMI_end_remove_clip_s,
+            'UMI_end_remove_clip_p':handle_p_value_log10(self.UMI_end_remove_clip_p),
+            'UMI_end_remove_clip_rbc':self.UMI_end_remove_clip_rbc,
+            'distance_to_end_by_UMI_s':self.UMI_end_s,
+            'ref_UMI_end_mean':self.ref_UMI_end_mean,
+            'ref_UMI_end_median':self.ref_UMI_end_median,
+            'alt_UMI_end_mean':self.alt_UMI_end_mean,
+            'alt_UMI_end_median':self.alt_UMI_end_median,
+            'mut_spots_vaf_mean':self.mut_spots_vaf_mean,
+            'mut_spots_vaf_median':self.mut_spots_vaf_median,
+            'only_alt_mutant_spot_prop':self.only_alt_mutant_spot_prop,
+
+            'baseq_p': handle_p_value_log10(self.baseq_p),
+            'baseq_s': self.baseq_s,
+            'ref_baseq1b_p': handle_p_value_log10(self.ref_baseq1b_p),
+            'ref_baseq1b_s': self.ref_baseq1b_s,
+            'ref_baseq1b_rbc': self.ref_baseq1b_rbc,
+            'alt_baseq1b_rbc':self.alt_baseq1b_rbc,
+            'alt_baseq1b_p': handle_p_value_log10(self.alt_baseq1b_p),
+            'alt_baseq1b_s': self.alt_baseq1b_s,
+            # 'context': self.context,
+            'DNAMutationType': self.DNAMutationType,
+            'RNAMutationType': self.RNAMutationType,
+            'equal_to_previous_bases': self.equal_to_previous_bases,
+            'cause_poly_alt': self.cause_poly_alt,
+            'multi_mapper_odds': self.multi_mapper_odds,
+            'multi_mapper_p': handle_p_value_log10(self.multi_mapper_p),
+            'ref_multi_map_prop': self.ref_multi_map_prop,
+            'alt_multi_map_prop': self.alt_multi_map_prop,
+            'multi_map_prop':self.multi_map_prop,
+            'ref_mismatches_mean': self.ref_mismatches_mean,
+            'alt_mismatches_mean': self.alt_mismatches_mean,
+            'mismatches_p': handle_p_value_log10(self.mismatches_p),
+            'mismatches_rbc':self.mismatches_rbc,
+            'mismatches_s': self.mismatches_s,
+            'strand_bias_p': handle_p_value_log10(self.strand_bias_p),
+            'strand_bias_odds': self.strand_bias_odds,
+            'mapq_mean':self.mapq_mean,
+            'ref_mapq_mean':self.ref_mapq_mean,
+            'alt_mapq_mean':self.alt_mapq_mean,
+            'mapq_p': handle_p_value_log10(self.mapq_p),
+            'mapq_rbc': self.mapq_rbc,
+            'mapq_s': self.mapq_s,
+            'mapq_difference': self.mapq_difference,
+            'read_depth': self.read_depth,
+            'alt_spot_num': self.alt_spot_num,
+            'alt_allele_count': self.alt_allele_count,
+            'vaf': self.vaf,
+            'consensus_UMI_count':self.consensus_UMI_count,
+            'consensus_alt_allele_count':self.consensus_alt_allele_count,
+            'consensus_vaf': self.consensus_vaf,
+            'VDB': self.VDB,
+            'RPBZ':self.RPBZ,
+            'SGB':self.SGB,
+            # 'dpUMI_p': self.dpUMI_p,
+            # 'dp_diff': self.feadp_diffture,
+            "read_depth_reverse": self.read_depth_reverse,
+            "read_depth_forward": self.read_depth_forward,
+            "alt_allele_count_reverse": self.alt_allele_count_reverse,
+            "alt_allele_count_forward": self.alt_allele_count_forward,
+            "major_read_strand": self.major_read_strand,
+            'ref_hardclip_prop': self.ref_hardclip_prop,
+            'alt_hardclip_prop': self.alt_hardclip_prop,
+            'ref_softclip_prop': self.ref_softclip_prop,
+            'alt_softclip_prop': self.alt_softclip_prop,
+            'softclip_prop':self.softclip_prop,
+            'hardclip_length_s': self.hardclip_length_s,
+            'hardclip_length_p': handle_p_value_log10(self.hardclip_length_p),
+            'hardclip_prop_odds': self.hardclip_prop_odds,
+            'hardclip_prop_p': self.hardclip_prop_p,
+            'softclip_length_s': self.softclip_length_s,
+            'softclip_length_p': handle_p_value_log10(self.softclip_length_p),
+            'softclip_length_rbc':self.softclip_length_rbc,
+            'softclip_prop_odds': self.softclip_prop_odds,
+            'softclip_prop_p': handle_p_value_log10(self.softclip_prop_p),
+            'indel_proportion_for_site': self.indel_proportion_for_site,
+            'reads_with_indel_odds':self.reads_with_indel_odds,
+            'reads_with_indel_p':self.reads_with_indel_p,
+            'alt2_proportion': self.alt2_proportion,
+            'consensus_alt2_proportion': self.consensus_alt2_proportion,
+            'UMI_number_per_spot_s': self.UMI_number_per_spot_s,
+            'UMI_number_per_spot_p': handle_p_value_log10(self.UMI_number_per_spot_p),
+            'read_number_per_spot_s': self.read_number_per_spot_s,
+            'read_number_per_spot_p': handle_p_value_log10(self.read_number_per_spot_p),
+            'ref_UMI_number_per_spot_max': self.ref_UMI_number_per_spot_max,
+            'alt_UMI_number_per_spot_max': self.alt_UMI_number_per_spot_max,
+            'ref_UMI_number_per_spot_median': self.ref_UMI_number_per_spot_median,
+            'alt_UMI_number_per_spot_median': self.alt_UMI_number_per_spot_median,
+            'alt_vs_total_dp_paired_wilcoxon_rbc':self.alt_vs_total_dp_paired_wilcoxon_rbc,
+            # 'nearSNV': self.nearSNV,
+            # 'nearIND_DEL': self.nearIND_DEL,
+            # 'nearIND_DEL_length': self.nearIND_DEL_length,
+            # 'nearIND_DEL_distance': self.nearIND_DEL_distance,
+            # 'splicing': self.splicing,
+            # UMI consistence:
+            'alt_UMI_avg_consistence': self.alt_UMI_avg_consistence,
+            'alt_consistent_UMI_prop_strict': self.alt_consistent_UMI_prop_strict,
+            'alt_consistent_UMI_prop_relaxed': self.alt_consistent_UMI_prop_relaxed,
+            'read_number_p': handle_p_value_log10(self.read_number_p),
+            'read_number_s':self.read_number_s,
+            'read_number_rbc':self.read_number_rbc,
+
+            'ref_read_number_perUMI_median':self.ref_read_number_perUMI_median,
+            'alt_read_number_perUMI_median':self.alt_read_number_perUMI_median,
+            'ref_read_number_perUMI_max':self.ref_read_number_perUMI_max,
+            'alt_read_number_perUMI_max':self.alt_read_number_perUMI_max,
+
+            # site info
+            'spot_num': self.spot_num,
+            'combine_nearest_phase_haplotype':self.combine_nearest_phase_haplotype,
+            'combine_nearest_info_mutant_prop':self.combine_nearest_info_mutant_prop,
+            'combine_nearest_discordant_prop':self.combine_nearest_discordant_prop,
+            'combine_nearest_phase_distance':self.combine_nearest_phase_distance,
+
+            'no_combine_most_phase_haplotype':self.no_combine_most_phase_haplotype,
+            'no_combine_most_info_mutant_prop':self.no_combine_most_info_mutant_prop,
+            'no_combine_most_discordant_prop':self.no_combine_most_discordant_prop,
+            'no_combine_most_phase_distance':self.no_combine_most_phase_distance,
+
+            'no_combine_nearest_phase_haplotype':self.no_combine_nearest_phase_haplotype,
+            'no_combine_nearest_info_mutant_prop':self.no_combine_nearest_info_mutant_prop,
+            'no_combine_nearest_discordant_prop':self.no_combine_nearest_discordant_prop,
+            'no_combine_nearest_phase_distance':self.no_combine_nearest_phase_distance,
+
+            'combine_most_phase_haplotype':self.combine_most_phase_haplotype,
+            'combine_most_info_mutant_prop':self.combine_most_info_mutant_prop,
+            'combine_most_discordant_prop':self.combine_most_discordant_prop,
+            'combine_most_phase_distance':self.combine_most_phase_distance,
+
+            'mappabilityScore': self.mappability_score,
+            'GCcontent': self.GCcontent,
+            'gene_type': self.gene_type,
+            'gene_anno': self.gene_anno ,
+            'variant_anno': self.variant_anno,
+            'context_10bp': self.context_10bp,
+            # 'func_anno': self.func_anno,
+            # 'RNAediting': self.RNAediting,
+            # 'GeneNumber': self.GeneNumber,
+            'gene_strand': self.major_read_strand,
+            'distanceExon': self.distanceExon,
+            # 'distanceExonIgnoreStrand':self.distanceExonIgnoreStrand,
+            'AFind': self.AFind,
+            'all_spots_vaf_mean': self.all_spots_vaf_mean,
+            'all_spots_vaf_max': self.all_spots_vaf_max,
+
+            'vaf_cluster_mean':self.vaf_cluster_mean,
+            'vaf_cluster_std_dev':self.vaf_cluster_std_dev,
+
+            # gene expression
+            'MI_p_expression': handle_p_value_log10(self.MI_p_expression),
+            'MI_s_expression': self.MI_stat_expression,
+
+            # statistic info
+            'mosaic_likelihood': self.mosaic_likelihood,
+            # 'het_likelihood': self.het_likelihood,
+            # 'althom_likelihood': self.althom_likelihood,
+            # 'refhom_likelihood': self.refhom_likelihood,
+
+            # spatial related
+            'alt_vs_total_dp_r2': self.alt_vs_total_dp_r2,
+            'alt_vs_total_dp_paired_wilcoxon_p':handle_p_value_log10(self.alt_vs_total_dp_paired_wilcoxon_p),
+            'alt_vs_total_dp_paired_wilcoxon_s':self.alt_vs_total_dp_paired_wilcoxon_s,
+            'mut_vs_nonmut_spots_KS_p': handle_p_value_log10(self.mut_vs_nonmut_spots_KS_p),
+            'mut_vs_nonmut_spots_KS_s': self.mut_vs_nonmut_spots_KS_s,
+            'mut_vs_nonmut_spots_MI_p': handle_p_value_log10(self.mut_vs_nonmut_spots_MI_p),
+            'mut_vs_nonmut_spots_MI_s': self.mut_vs_nonmut_spots_MI_s,
+            'pass_spatial_test':self.test_sig,
+            'mutant_rate': self.mutant_rate,
+            'mut_spots_prop_by_probablity': self.mutant_rate_prob,
+            'mut_spots_prop_by_likelihood':self.mutant_rate_likelihood,
+            'mut_spots_prop_by_vaf':self.mutant_rate_vaf,
             'outlier_clusters': self.outlier_clusters,
             'outlier_vaf': self.outlier_vaf,
             'outlier_MI_p': handle_p_value_log10(self.outlier_moranI_pvalue),
@@ -1163,103 +1839,21 @@ class Features:
             'fref':self.fref,
             'falt':self.falt,
 
-            'muts_in_cluster_p': handle_p_value_log10(self.muts_in_cluster_p),
-            'muts_in_cluster_s': self.muts_in_cluster_s
-        }
-
-        for key in back_dict.keys():
-            value_to_str=back_dict[key]
-            if type(back_dict[key])==list:
-                value_to_str=",".join([str(i) for i in back_dict[key]])
-                if value_to_str=="":
-                    value_to_str="no"
-            if back_dict[key]=="":
-                value_to_str="no"
-
-            back_dict[key]=value_to_str
-
-        return back_dict
-    
-    def test_values(self):
-        test_dict={
-        'identifier': self.identifier,
-        # 'alt_SpotNum': self.alt_SpotNum,
-        # 'dp': self.dp,
-        # "ref_ins_num": self.ref_ins_num,
-        # "alt_ins_num": self.alt_ins_num,
-        # "ref_ins_length": self.ref_ins_length,
-        # "alt_ins_length": self.alt_ins_length,
-        # "ref_ins_distance": self.ref_ins_distance,
-        # "alt_ins_distance": self.alt_ins_distance,
-
-        # "ref_del_num": self.ref_del_num,
-        # "alt_del_num": self.alt_del_num,
-        # "ref_del_length": self.ref_del_length,
-        # "alt_del_length": self.alt_del_length,
-        # "ref_del_distance": self.ref_del_distance,
-        # "alt_del_distance": self.alt_del_distance,
-
-        # "ref_ins_prop": self.ref_ins_prop,
-        # "ref_del_prop": self.ref_del_prop,
-        # "ref_ins_major_prop": self.ref_ins_major_prop,
-        # "ref_del_major_prop": self.ref_del_major_prop,
-        # "alt_ins_prop":self.alt_ins_prop,
-        # "alt_del_prop": self.alt_del_prop,
-        # "alt_ins_major_prop":self.alt_ins_major_prop,
-        # "alt_del_major_prop":self.alt_del_major_prop, 
-        'combine_nearest_phase_haplotype':self.combine_nearest_phase_haplotype,
-        'combine_nearest_info_mutant_prop':self.combine_nearest_info_mutant_prop,
-        'combine_nearest_discordant_prop':self.combine_nearest_discordant_prop,
-        'combine_nearest_phase_distance':self.combine_nearest_phase_distance,
-
-        'no_combine_most_phase_haplotype':self.no_combine_most_phase_haplotype,
-        'no_combine_most_info_mutant_prop':self.no_combine_most_info_mutant_prop,
-        'no_combine_most_discordant_prop':self.no_combine_most_discordant_prop,
-        'no_combine_most_phase_distance':self.no_combine_most_phase_distance,
-
-        'no_combine_nearest_phase_haplotype':self.no_combine_nearest_phase_haplotype,
-        'no_combine_nearest_info_mutant_prop':self.no_combine_nearest_info_mutant_prop,
-        'no_combine_nearest_discordant_prop':self.no_combine_nearest_discordant_prop,
-        'no_combine_nearest_phase_distance':self.no_combine_nearest_phase_distance,
-
-        'combine_most_phase_haplotype':self.combine_most_phase_haplotype,
-        'combine_most_info_mutant_prop':self.combine_most_info_mutant_prop,
-        'combine_most_discordant_prop':self.combine_most_discordant_prop,
-        'combine_most_phase_distance':self.combine_most_phase_distance
-
-        # 'dp': self.dp,
-        # 'alt_dp':self.alt_dp,
-        # "reverse_dp": self.reverse_dp,
-        # "forward_dp": self.forward_dp,
-        # "alt_reverse_dp": self.alt_reverse_dp,
-        # "alt_forward_dp": self.alt_forward_dp,
-        # "major_read_strand": self.major_read_strand,
-        # 'mean_distance_to_end':self.mean_distance_to_end,
-        # 'RNAMutationType':self.RNAMutationType,
-        # 'DNAMutationType':self.DNAMutationType,
-        # 'alt_UMI_consistence_prop': self.alt_UMI_consistence_prop,
-        # 'alt_consistence_hard_prop': self.alt_consistence_hard_prop,
-        # 'alt_consistence_soft_prop': self.alt_consistence_soft_prop,
-        # 'read_number_p':self.read_number_p,
-        # 'ref_read_number_perUMI_median':self.ref_read_number_perUMI_median,
-        # 'alt_read_number_perUMI_median':self.alt_read_number_perUMI_median,
-        # 'ref_read_number_perUMI_max':self.ref_read_number_perUMI_max,
-        # 'alt_read_number_perUMI_max':self.alt_read_number_perUMI_max,
-        # 'vaf_cluster_mean':self.vaf_cluster_mean,
-        # 'vaf_cluster_std_dev':self.vaf_cluster_std_dev,
-        # spatial related
-        # 'r2': self.r2,
-        # 'wilcoxon_p':handle_p_value_log10(self.wilcoxon_p),
-        # 'KS_p': handle_p_value_log10(self.KS_p),
-        # 'MI_p': handle_p_value_log10(self.MI_p),
-        # 'sf_test_sig':self.test_sig,
-        # 'mut_rate_prob': self.mutant_rate_prob,
-        # 'mut_rate_likelihood':self.mutant_rate_likelihood,
-        # 'mut_rate_vaf':self.mutant_rate_vaf,
-        # 'outlier_clusters': self.outlier_clusters,
-        # 'outlier_vaf': self.outlier_vaf,
-        # 'outlier_MI': self.outlier_moranI_pvalue,
-        # 'num_outlier_cluster': self.num_outlier_cluster
+            'baseq_p_adj':handle_p_value_log10(self.baseq_p_adj),
+            'ref_baseq1b_p_adj':handle_p_value_log10(self.ref_baseq1b_p_adj),
+            'alt_baseq1b_p_adj':handle_p_value_log10(self.alt_baseq1b_p_adj),
+            'querypos_p_adj':handle_p_value_log10(self.querypos_p_adj),
+            'leftpos_p_adj':handle_p_value_log10(self.leftpos_p_adj),
+            'seqpos_p_adj':handle_p_value_log10(self.seqpos_p_adj),
+            'distance_to_end_p_adj':handle_p_value_log10(self.distance_to_end_p_adj),
+            'UMI_end_p_adj':handle_p_value_log10(self.UMI_end_p_adj),
+            'UMI_end_remove_clip_p_adj':handle_p_value_log10(self.UMI_end_remove_clip_p_adj),
+            'mismatches_p_adj':handle_p_value_log10(self.mismatches_p_adj),
+            'mapq_p_adj':handle_p_value_log10(self.mapq_p_adj),
+            'read_number_p_adj':handle_p_value_log10(self.read_number_p_adj),
+            'softclip_length_p_adj':handle_p_value_log10(self.softclip_length_p_adj)
+            # 'muts_in_cluster_p': handle_p_value_log10(self.muts_in_cluster_p),
+            # 'muts_in_cluster_s': self.muts_in_cluster_s
         }
         # print(test_dict)
         for key in test_dict.keys():
@@ -1348,77 +1942,23 @@ def handle_h5ad_file(h5ad_file):
     return empty_df, adata
 
 
-# def get_intergration_from_identifier_and_file(compare_pl_path,identifier,query_file,index_in_query="0 1 2 3"):
-#     """
-#     This function is used to get the intergration result from identifier and one special query file.
-#     Note: The top 4 columns of query_file must be "chrom pos ref alt"
-    
-#     """
-#     perl_script=compare_pl_path
-#     identifier_line="\t".join(identifier.strip().split("_"))
-
-#     command=f"echo -e \"{identifier_line}\" |perl {perl_script} - {query_file} {index_in_query}|sort -u"
-#     try:
-#         result=subprocess.check_output(command,text=True,shell=True)
-#         # result=subprocess.run(command, capture_output=True,shell=True)
-#         print(result)
-#         return result
-#     except:
-#         print(f"Something wrong when run the command: {command}")
-#         return ""
-
 def get_intergration_from_identifier_and_file(compare_pl_path,identifier,query_file,index_in_query="0 1 2 3"):
     """
     This function is used to get the intergration result from identifier and one special query file.
     Note: The top 4 columns of query_file must be "chrom pos ref alt"
+    
     """
     perl_script=compare_pl_path
     identifier_line="\t".join(identifier.strip().split("_"))
+
+    command=f"echo -e \"{identifier_line}\" |perl {perl_script} - {query_file} {index_in_query}|sort -u"
     try:
-        echo_proc = subprocess.Popen(['echo', '-e', identifier_line], stdout=subprocess.PIPE, text=True)
-        # print("echo",echo_proc.returncode)
-        index_args = index_in_query.split()
-        perl_args = ['perl', perl_script, '-', query_file] + index_args
-        perl_proc = subprocess.Popen(
-            perl_args,
-            stdin=echo_proc.stdout, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,  # Capture error output
-            text=True
-        )
-        # print("perl",perl_proc.returncode)
-        echo_proc.stdout.close()
-        sort_proc = subprocess.Popen(['sort', '-u'], 
-                                    stdin=perl_proc.stdout, 
-                                    stdout=subprocess.PIPE, 
-                                    stderr=subprocess.PIPE,
-                                    text=True)
-        # print("sort",sort_proc.returncode)
-        
-        perl_proc.stdout.close()
-        result, sort_err = sort_proc.communicate()
-        # print('result',result)
-        _, perl_err = perl_proc.communicate()
-        if perl_err:
-            print(f"Perl error: {perl_err}")
-        if sort_err:
-            print(f"Sort error: {sort_err}")
-        if result.strip():
-            return result
-        else:
-            command = f"echo -e \"{identifier_line}\" | perl {perl_script} - {query_file} {index_in_query} | sort -u"
-            # print(command)
-            try:
-                debug_result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT, text=True)
-                # print('debug:',debug_result)
-                return debug_result
-            except subprocess.CalledProcessError as e:
-                print(f"Error: {e.output}")
-                return ""
-    except Exception as e:
-        print(f"Exception occurred during execution: {str(e)}")
+        result=subprocess.check_output(command,text=True,shell=True)
+        return result
+    except:
+        print(f"Something wrong when run the command: {command}")
         return ""
-    
+
 
 def get_gene_expression(bam_file, gtf_file,out_file,htseq_path=""):
     """
@@ -1464,32 +2004,10 @@ def get_info_by_bedtools(tmp_mappbablity_file,identifier):
     try:
         result=subprocess.check_output(command,shell=True,text=True)
         return result
-    except Exception as e:
-        print(f"Something went wrong when running bedtools intersect: {e}")
+    except:
+        print(f"Something wrong when run {command}!")
         return ""
 
-
-# def get_info_by_bedtools(tmp_mappbablity_file, identifier):
-#     chrom, pos, _, _ = handle_posname(identifier)
-#     identifier_line = f"{chrom}\t{str(pos)}\t{str(pos)}"
-#     try:
-#         # Create echo process
-#         echo_proc = subprocess.Popen(['echo', '-e', identifier_line], stdout=subprocess.PIPE, text=True)
-#         # Create bedtools process, connecting echo's output to bedtools' input
-#         bedtools_proc = subprocess.Popen(
-#             ['bedtools', 'intersect', '-a', tmp_mappbablity_file, '-b', '-'],
-#             stdin=echo_proc.stdout,
-#             stdout=subprocess.PIPE,
-#             text=True
-#         )
-#         # Close echo's stdout to avoid deadlock
-#         echo_proc.stdout.close()
-#         # Get the final result
-#         result, _ = bedtools_proc.communicate()
-#         return result
-#     except Exception as e:
-#         print(f"Something went wrong when running bedtools intersect: {e}")
-#         return ""
 
 def get_info_by_grep(aim_file,query_id):
     """
@@ -1570,7 +2088,7 @@ def handle_mappbablity_file(tmp_dir,mappbablity_file,mutation_bed):
 
     tmp_index=str(uuid.uuid4())
     tmp_intersect_file=os.path.join(tmp_dir,tmp_index+".used_mappablity_file.tmp")
-    intersect_command=f"bedtools intersect -a {mappbablity_file} -b {mutation_bed} > {tmp_intersect_file}" 
+    intersect_command=f"bedtools intersect  -a {mappbablity_file} -b {mutation_bed} > {tmp_intersect_file}" 
     result2=subprocess.run(intersect_command,shell=True)
     if result2.returncode!=0:
         print(f"Something wrong when run {intersect_command}!")
@@ -1615,7 +2133,8 @@ def get_context_from_reference(reference_fasta,major_read_strand,identifier,prev
     GCcontent=(context_20bp.count('G')+context_20bp.count('C'))/len(context_20bp)
     # context=reference[chrom][int(pos)-2:int(pos)+1]
     # context2=(base[str(reference[chrom][int(pos)-2:int(pos)-1])]+base[str(reference[chrom][int(pos)-1:int(pos)])]+base[str(reference[chrom][int(pos):int(pos)+1])])[::-1]
-
+    context_10bp=str(reference[chrom][max(1,int(pos)-6):min(int(pos)+5,int(chr_size[chrom]))])
+    
     ref=ref.split(",")[0]
     up_base=str(reference[chrom][pos-1-1])
     down_base=str(reference[chrom][pos+1-1])
@@ -1648,260 +2167,445 @@ def get_context_from_reference(reference_fasta,major_read_strand,identifier,prev
         equal_to_previous_bases=False
 
     changed_context_bases=str(reference[chrom][max(1,int(pos)-1-previous_base):int(pos)-1])+alt+str(reference[chrom][int(pos):min(int(pos)+previous_base,int(chr_size[chrom]))])
-    cause_ploy_alt=str(alt)*(previous_base+1) in changed_context_bases
+    cause_poly_alt=str(alt)*(previous_base+1) in changed_context_bases
 
     del reference
-    return GCcontent, DNAMutationType, RNAMutationType, equal_to_previous_bases, cause_ploy_alt
+    return GCcontent, DNAMutationType, RNAMutationType, equal_to_previous_bases, cause_poly_alt,context_10bp
 
 
-def handle_bam_file(bam_file,chrom,pos,ref,alt,CBtag,UBtag,readLen=120):
-    exist_CB=[]
-    if "," in ref:
-        one_ref=ref[0]
-    else:
-        one_ref=ref
-    result_dict={"A":defaultdict(list), "T":defaultdict(list), "C":defaultdict(list), "G":defaultdict(list), "del":defaultdict(list)}
-    for geno in "ATCG":
-        result_dict[geno]["dp"]=0
-        result_dict[geno]["reverse_dp"]=0
-        result_dict[geno]["forward_dp"]=0
-        result_dict[geno]["edist"]=[0]*readLen
-        result_dict[geno]["GenoSpotNum"]=0
+# def handle_bam_file(bam_file,chrom,pos,ref,alt,run_type,bins,readLen=120):
+#     exist_CB=[]
+#     if "," in ref:
+#         one_ref=ref[0]
+#     else:
+#         one_ref=ref
 
-    dp=0
-    in_bam_read=pysam.AlignmentFile(bam_file, "rb") # , reference_filename=ref_fasta)
-    pos_index = pos-1
-    barcode_name=[]
-    site_barcode_UMI_dict={}
-    for read in in_bam_read.fetch(chrom, pos-1, pos):
+#     result_dict={"A":defaultdict(list), "T":defaultdict(list), "C":defaultdict(list), "G":defaultdict(list), "del":defaultdict(list)}
+#     for geno in "ATCG":
+#         result_dict[geno]["dp"]=0
+#         result_dict[geno]["reverse_dp"]=0
+#         result_dict[geno]["forward_dp"]=0
+#         result_dict[geno]["edist"]=[0]*readLen
+#         result_dict[geno]["GenoSpotNum"]=0
+
+#     dp=0
+#     in_bam_read=pysam.AlignmentFile(bam_file, "rb") # , reference_filename=ref_fasta)
+#     pos_index = pos-1
+#     barcode_name=[]
+#     site_barcode_UMI_dict={}
+#     for read in in_bam_read.fetch(chrom, pos-1, pos):
+#         if run_type=="visium":
+#             try:
+#                 CB=read.get_tag("CB").strip()
+#                 UB=read.get_tag("UB").strip()
+
+#                 barcode_name=str(CB)
+#                 UMI_name=str(UB)
+#             except:
+#                 continue
+#         elif run_type=="stereo":
+#             try:
+#                 Cx_raw=int(read.get_tag("Cx"))
+#                 Cy_raw=int(read.get_tag("Cy"))
+#                 if bins !=1:
+#                     Cx=round_to_nearest_bin(Cx_raw,bins)
+#                     Cy=round_to_nearest_bin(Cy_raw,bins)
+#                 else:
+#                     Cx=Cx_raw
+#                     Cy=Cy_raw
+#                 UR=read.get_tag("UR").strip()
+
+#                 barcode_name=str(Cx)+"_"+str(Cy)
+#                 UMI_name=str(Cx_raw)+"_"+str(Cy_raw)+"_"+str(UR)
+#             except:
+#                 continue
+
+#         elif run_type=="ST":
+#             try:
+#                 CB=str(read.get_tag("B0"))
+#                 UB=str(read.get_tag("B3"))
+#                 barcode_name=str(CB)
+#                 UMI_name=str(UB)
+#             except:
+#                 continue
+#         else:
+#             # print("type",run_type)
+#             continue
+#         # try:
+#         #     CB=str(read.get_tag(CBtag)).strip()
+#         #     UB=str(read.get_tag(UBtag)).strip()
+#         #     Name=CB+"_"+UB ## In this version, the consensus info will be ignored
+#         # except:
+#         #     # barcode_low_quality += 1
+#         #     continue
+
+#         pos_index=pos-1
+#         seq_soft_cut, ins_info, del_info, seq_hard_clip = combine_info_from_cigar(read.cigar)
+#         cut_seq=handle_seq(read.seq, seq_soft_cut)
+#         cut_pos=handle_pos(read.get_reference_positions(), ins_info)
+#         indel_pos_list=judge_pos_in_indel(ins_info,del_info,read.get_reference_positions())
+
+#         if pos_index in cut_pos or pos_index in indel_pos_list:
+#             dp+=1
+#             if pos_index in indel_pos_list:
+#                 geno="del"
+#                 result_dict[geno]["is_indel"].append(1)
+#                 result_dict[geno]["baseq"]=[]
+
+#             else:
+#                 edist=cut_pos.index(pos_index)  
+#                 geno = cut_seq[edist]  
+#                 if geno not in "ATCG":
+#                     continue
+
+#                 epos=edist/len(cut_pos)
+#                 result_dict[geno]["epos"].append(epos)
+#                 result_dict[geno]["edist"][edist]+=1
+
+#                 result_dict["is_indel"]=[]
+#                 raw_index = handle_quality_matrix(cut_pos.index(pos_index),read.seq,cut_seq)
+#                 quality=read.get_forward_qualities()[raw_index]
+#                 result_dict[geno]["baseq"].append(quality)
+#                 # if result_dict[geno]["dp"]!=[]:
+#                 result_dict[geno]["dp"]+=1
+#                 # else:
+#                 #     result_dict[geno]["dp"]=0
+#             # effective_DP += 1
+        
+#             #number_mismatch; is_reverse; mapping_quality
+#                 number_mismatch=read.get_tag("nM"); result_dict[geno]["number_mismatch"].append(number_mismatch)
+#                 is_reverse=read.is_reverse; result_dict[geno]["is_reverse"].append(is_reverse)
+#                 map_q=read.mapq; result_dict[geno]["map_q"].append(map_q)
+                
+#                 number_mapper=read.get_tag("NH"); result_dict[geno]["number_mapper"].append(number_mapper)
+
+#                 #soft_clip_length and hard_clip_length
+#                 left_softclip=0 if seq_soft_cut[0]==None else seq_soft_cut[0]
+#                 right_softclip=0 if seq_soft_cut[1]==None else len(read.seq)-seq_soft_cut[1]
+#                 softclip_length=left_softclip+right_softclip
+#                 result_dict[geno]["left_softclip"].append(left_softclip)
+#                 result_dict[geno]["right_softclip"].append(right_softclip)
+#                 result_dict[geno]["softclip_length"].append(softclip_length)
+
+#                 left_hardclip,right_hardclip=seq_hard_clip[0],seq_hard_clip[1]
+#                 hardclip_length=left_hardclip+right_hardclip
+#                 result_dict[geno]["left_hardclip"].append(left_hardclip)
+#                 result_dict[geno]["right_hardclip"].append(right_hardclip)
+#                 result_dict[geno]["hardclip_length"].append(hardclip_length)
+
+#                 #indel information, indel number, indel length, indel distance
+#                 ins_num,ins_length,ins_distance=get_indel_info(ins_info,read.get_reference_positions().index(pos_index))
+#                 del_num,del_length,del_distance=get_indel_info(del_info,read.get_reference_positions().index(pos_index))
+#                 result_dict[geno]["ind_num"].append(ins_num+del_num)
+#                 result_dict[geno]["ins_num"].append(ins_num)
+#                 if ins_num==0:
+#                     result_dict[geno]["ins_length"].append(["no"]); result_dict[geno]["ins_distance"].append(["no"])
+#                 else: #the ins_length and ins_distance are list format
+#                     result_dict[geno]["ins_length"].append(ins_length) ## append a list
+#                     result_dict[geno]["ins_distance"].append(ins_distance) ## append a list
+                
+#                 result_dict[geno]["del_num"].append(del_num)
+#                 if del_num==0:
+#                     result_dict[geno]["del_length"].append(["no"]); result_dict[geno]["del_distance"].append(["no"])
+#                 else: # the del_length and del_distance are list format
+#                     result_dict[geno]["del_length"].append(del_length)
+#                     result_dict[geno]["del_distance"].append(del_distance)
+
+#                 # querypos(querypos_p): the distance between pos and read start (doubt: the more far away from 1st seq pos, the lower quality may have), 
+#                 # seqpos_p cycling length, related with strand (note: next_reference_start is only work for PE); 
+#                 # for visium, all reads are read2, so seqpos may same as the len(querypos)
+#                 # left pos: mapping position for the reference start; 
+#                 left_boundary=edist+left_softclip+left_hardclip
+#                 right_boundary=len(cut_pos)-edist + right_softclip + right_hardclip
+#                 result_dict[geno]["left_read_edist"].append(edist)
+#                 result_dict[geno]["right_read_edist"].append(len(cut_pos)-edist)
+
+#                 left_boundary_remove_clip=edist
+#                 right_boundary_remove_clip=len(cut_pos)-edist
+#                 result_dict[geno]["querypos"].append(left_boundary)
+#                 result_dict[geno]["seqpos"].append(right_boundary)
+#                 if is_reverse in [True,"TRUE","true","True"]:
+#                     distance_to_end=right_boundary/readLen
+#                     result_dict[geno]["reverse_dp"]+=1
+#                     distance_to_end_remove_clip=right_boundary_remove_clip/len(cut_pos)
+#                     distance_to_end_remove_clip_save=right_boundary_remove_clip
+#                 else:
+#                     distance_to_end=left_boundary/readLen
+#                     result_dict[geno]["forward_dp"]+=1
+#                     distance_to_end_remove_clip=left_boundary_remove_clip/len(cut_pos)
+#                     distance_to_end_remove_clip_save=left_boundary_remove_clip
+#                 # print(geno,distance_to_end_remove_clip)
+#                 result_dict[geno]["distance_to_end"].append(distance_to_end)
+#                 result_dict[geno]["distance_to_end_remove_clip"].append(distance_to_end_remove_clip)
+
+#                 leftpos_p=read.reference_start
+#                 rightpos_p=read.reference_end # same as leftpo, can be deleted 
+#                 result_dict[geno]["leftpos_p"].append(leftpos_p)
+#                 result_dict[geno]["rightpos_p"].append(rightpos_p)
+
+#                 #baseq1b
+#                 if pos_index+1 in cut_pos:
+#                     baseq1b=read.get_forward_qualities()[raw_index+1]
+#                 else:
+#                     baseq1b=""
+#                 result_dict[geno]["baseq1b"].append(baseq1b)
+#                 # print(read)
+#                 #gene information
+#                 try:
+#                     result_dict[geno]["GeneID_list"].append(read.get_tag("GX"))
+#                 except:
+#                     result_dict[geno]["GeneID_list"].append("no")
+#                 try:
+#                     result_dict[geno]["GeneName_list"].append(read.get_tag("GN"))
+#                 except:
+#                     result_dict[geno]["GeneName_list"].append("no")
+#                 try:
+#                     #'ENST00000301072,+1576,120M;ENST00000541364,+1539,120M;ENST00000552448,+1650,120M;ENST00000639419,+923,120M')
+#                     for item in read.get_tag("TX").split(";"):
+#                         transcript_id,_,_=item.split(",")
+#                         result_dict[geno]["TransID_list"].append(transcript_id)
+#                 except:
+#                     result_dict[geno]["TransID_list"].append("no")
+
+#                 if barcode_name not in site_barcode_UMI_dict.keys():
+#                     site_barcode_UMI_dict[barcode_name]=defaultdict(dict)
+
+#                 if UMI_name not in site_barcode_UMI_dict[barcode_name].keys():
+#                     site_barcode_UMI_dict[barcode_name][UMI_name]["count"]=defaultdict(int)
+#                     site_barcode_UMI_dict[barcode_name][UMI_name]["quality"]={"A":defaultdict(int),"T":defaultdict(int),"C":defaultdict(int),"G":defaultdict(int)}
+#                     # site_barcode_UMI_dict[barcode_name][UMI_name]["context"]=[]
+#                     site_barcode_UMI_dict[barcode_name][UMI_name]["end"]=[]
+
+#                 site_barcode_UMI_dict[barcode_name][UMI_name]["count"][geno]+=1
+#                 site_barcode_UMI_dict[barcode_name][UMI_name]["quality"][geno][quality]+=1
+#                 # site_barcode_UMI_dict[barcode_name][UMI_name]["context"].append(cut_seq[max(0,read_index-4):min(read_index+5,len(cut_seq))])
+#                 site_barcode_UMI_dict[barcode_name][UMI_name]["end"].append(distance_to_end_remove_clip)
+                
+#     for barcode in site_barcode_UMI_dict.keys():
+#         read_have_alt=False
+#         read_number_per_spot=0
+#         UMI_number_per_spot=0
+#         alt_UMI_number_per_spot=0
+#         # UMI_dp+=len(site_barcode_UMI_dict[barcode].keys())
+#         for UMI in site_barcode_UMI_dict[barcode]:             
+#             count_dict=site_barcode_UMI_dict[barcode][UMI]["count"]
+#             quality_dict=site_barcode_UMI_dict[barcode][UMI]["quality"]
+#             phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
+#             candidate_allele,phred=get_most_candidate_allele(phred_dict,one_ref)
+#             threshold=1
+#             norm_count=check_UMIconsistence_for_each_geno(count_dict,threshold)
+#             if norm_count!=[]:
+#                 for geno,prop in zip("ATCG",norm_count):
+#                     result_dict[geno]["UMI_consistence_prop"].append(prop)
+
+#             for geno in "ATCG":
+#                 if site_barcode_UMI_dict[barcode][UMI]["count"][geno]!=0:
+#                     # print([count_dict["A"],count_dict["T"],count_dict["C"],count_dict["G"]])
+#                     result_dict[geno]["read_number_per_UMI"].append(count_dict[geno])
+#                     read_number_per_spot+=site_barcode_UMI_dict[barcode][UMI]["count"][geno]
+
+#             UMI_number_per_spot+=1
+#             end=np.median(site_barcode_UMI_dict[barcode][UMI]["end"])
+
+#             if candidate_allele==alt:
+#                 read_have_alt=True
+#                 alt_UMI_number_per_spot+=1
+        
+#         if read_have_alt==True:
+#             result_dict[alt]["GenoSpotNum"]+=1 
+#             result_dict[alt]["total_read_number_per_spot"].append(read_number_per_spot)
+#             result_dict[alt]["total_UMI_number_per_spot"].append(UMI_number_per_spot)
+#             result_dict[alt]["UMI_end"].append(end)
+#             result_dict[alt]["vaf_spot"].append(alt_UMI_number_per_spot/UMI_number_per_spot)
+
+#         else:
+#             result_dict[one_ref]["GenoSpotNum"]+=1
+#             result_dict[one_ref]["total_read_number_per_spot"].append(read_number_per_spot)
+#             result_dict[one_ref]["total_UMI_number_per_spot"].append(UMI_number_per_spot)
+#             result_dict[one_ref]["UMI_end"].append(end)
+
+#     del in_bam_read
+#     return result_dict, dp
+
+
+# def grep_dp_from_barcode_dir1(barcode_file):
+#     # refine to get the vaf
+#     command_ref="awk '$11==0 {print $7/$6}' %s" % (barcode_file)
+#     try:
+#         result_ref=subprocess.check_output(command_ref,text=True,shell=True)
+#         ref_list=[int(float(i)) for i in result_ref.strip().split("\n")]
+#     except:
+#         ref_list=[]
+
+#     command_alt="awk '$11==1 {print $7/$6}' %s" % (barcode_file)
+#     try:
+#         result_alt=subprocess.check_output(command_alt,text=True,shell=True)
+#         alt_list=[int(float(i)) for i in result_alt.strip().split("\n")]
+#     except:
+#         alt_list=[]   
+
+#     return ref_list,alt_list
+
+
+# def grep_dp_from_barcode_dir2(barcode_file):
+#     command_ref="awk '$3==0 {print $3/$2}' %s" % (barcode_file)
+#     try:
+#         result_ref=subprocess.check_output(command_ref,text=True,shell=True)
+#         ref_list=[float(i) for i in result_ref.strip().split("\n")]
+#     except:
+#         ref_list=[]
+
+#     command_alt="awk '$3>=1 {print $3/$2}' %s" % (barcode_file)
+#     try:
+#         result_alt=subprocess.check_output(command_alt,text=True,shell=True)
+#         alt_list=[float(i) for i in result_alt.strip().split("\n")]
+#     except:
+#         alt_list=[]   
+
+#     return ref_list,alt_list
+
+def handle_barcode_name(cell_dict, barcode_name):
+    """根据cell_dict校正barcode_name"""
+    # 这里假设cell_dict是一个映射字典，格式为 {原barcode_name: 校正后的barcode_name}
+    # 如果barcode_name在字典中，返回校正后的名称，否则返回原名称
+    return cell_dict.get(barcode_name, barcode_name)
+
+def grep_dp_from_barcode_dir1(barcode_file, cell_dict=None):
+    # 如果提供了cell_dict，则需要校正barcode_name
+    if cell_dict:
+        # 使用字典存储每个校正后barcode_name的ref和alt的分子分母
+        barcode_data = {}
+        
         try:
-            CB=read.get_tag(CBtag).strip()
-            UB=read.get_tag(UBtag).strip()
-            Name=CB+"_"+UB ## In this version, the consensus info will be ignored
+            # 读取文件并处理每一行
+            with open(barcode_file, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 11:  # 确保有足够的列
+                        barcode_name = parts[0]  # 第一列是barcode_name
+                        corrected_name = handle_barcode_name(cell_dict, barcode_name)
+                        
+                        # 第6列是分母，第7列是分子
+                        denominator = float(parts[5])  # 第6列，0-based索引是5
+                        numerator = float(parts[6])    # 第7列，0-based索引是6
+                        is_alt = int(parts[10])       # 第11列，0-based索引是10
+                        
+                        if denominator > 0:  # 避免除以0
+                            if corrected_name not in barcode_data:
+                                barcode_data[corrected_name] = {
+                                    'ref_numerator': 0,
+                                    'ref_denominator': 0,
+                                    'alt_numerator': 0,
+                                    'alt_denominator': 0
+                                }
+                            
+                            if is_alt == 0:  # ref
+                                barcode_data[corrected_name]['ref_numerator'] += numerator
+                                barcode_data[corrected_name]['ref_denominator'] += denominator
+                            else:  # alt
+                                barcode_data[corrected_name]['alt_numerator'] += numerator
+                                barcode_data[corrected_name]['alt_denominator'] += denominator
+        except Exception as e:
+            print(f"Error processing file {barcode_file}: {e}")
+            return [], []
+        
+        # 计算每个校正后barcode_name的VAF
+        ref_list = []
+        alt_list = []
+        
+        for barcode_name, data in barcode_data.items():
+            # 计算ref VAF
+            if data['ref_denominator'] > 0:
+                ref_vaf = data['ref_numerator'] / data['ref_denominator']
+                ref_list.append(ref_vaf)
+            
+            # 计算alt VAF
+            if data['alt_denominator'] > 0:
+                alt_vaf = data['alt_numerator'] / data['alt_denominator']
+                alt_list.append(alt_vaf)
+        
+        return ref_list, alt_list
+    
+    else:
+        # 如果没有cell_dict，使用原来的逻辑
+        command_ref = "awk '$11==0 {print $7/$6}' %s" % (barcode_file)
+        try:
+            result_ref = subprocess.check_output(command_ref, text=True, shell=True)
+            ref_list = [float(i) for i in result_ref.strip().split("\n") if i]
         except:
-            # barcode_low_quality += 1
-            continue
+            ref_list = []
 
-        pos_index=pos-1
-        seq_soft_cut, ins_info, del_info, seq_hard_clip = combine_info_from_cigar(read.cigar)
-        cut_seq=handle_seq(read.seq, seq_soft_cut)
-        cut_pos=handle_pos(read.get_reference_positions(), ins_info)
-        indel_pos_list=judge_pos_in_indel(ins_info,del_info,read.get_reference_positions())
+        command_alt = "awk '$11==1 {print $7/$6}' %s" % (barcode_file)
+        try:
+            result_alt = subprocess.check_output(command_alt, text=True, shell=True)
+            alt_list = [float(i) for i in result_alt.strip().split("\n") if i]
+        except:
+            alt_list = []   
 
-        if pos_index in cut_pos or pos_index in indel_pos_list:
-            dp+=1
-            if pos_index in indel_pos_list:
-                geno="del"
-                result_dict[geno]["is_indel"].append(1)
-                result_dict[geno]["baseq"]=[]
+        return ref_list, alt_list
 
-            else:
-                edist=cut_pos.index(pos_index)  
-                geno = cut_seq[edist]  
-                if geno not in "ATCG":
-                    continue
 
-                epos=edist/len(cut_pos)
-                result_dict[geno]["epos"].append(epos)
-                result_dict[geno]["edist"][edist]+=1
-
-                result_dict["is_indel"]=[]
-                raw_index = handle_quality_matrix(cut_pos.index(pos_index),read.seq,cut_seq)
-                quality=read.get_forward_qualities()[raw_index]
-                result_dict[geno]["baseq"].append(quality)
-                # if result_dict[geno]["dp"]!=[]:
-                result_dict[geno]["dp"]+=1
-                # else:
-                #     result_dict[geno]["dp"]=0
-            # effective_DP += 1
+def grep_dp_from_barcode_dir2(barcode_file, cell_dict=None):
+    # 如果提供了cell_dict，则需要校正barcode_name
+    if cell_dict:
+        # 使用字典存储每个校正后barcode_name的分子分母
+        barcode_data = {}
         
-            #number_mismatch; is_reverse; mapping_quality
-                number_mismatch=read.get_tag("nM"); result_dict[geno]["number_mismatch"].append(number_mismatch)
-                is_reverse=read.is_reverse; result_dict[geno]["is_reverse"].append(is_reverse)
-                map_q=read.mapq; result_dict[geno]["map_q"].append(map_q)
-                
-                number_mapper=read.get_tag("NH"); result_dict[geno]["number_mapper"].append(number_mapper)
-
-                #soft_clip_length and hard_clip_length
-                left_softclip=0 if seq_soft_cut[0]==None else seq_soft_cut[0]
-                right_softclip=0 if seq_soft_cut[1]==None else len(read.seq)-seq_soft_cut[1]
-                softclip_length=left_softclip+right_softclip
-                result_dict[geno]["left_softclip"].append(left_softclip)
-                result_dict[geno]["right_softclip"].append(right_softclip)
-                result_dict[geno]["softclip_length"].append(softclip_length)
-
-                left_hardclip,right_hardclip=seq_hard_clip[0],seq_hard_clip[1]
-                hardclip_length=left_hardclip+right_hardclip
-                result_dict[geno]["left_hardclip"].append(left_hardclip)
-                result_dict[geno]["right_hardclip"].append(right_hardclip)
-                result_dict[geno]["hardclip_length"].append(hardclip_length)
-
-                #indel information, indel number, indel length, indel distance
-                ins_num,ins_length,ins_distance=get_indel_info(ins_info,read.get_reference_positions().index(pos_index))
-                del_num,del_length,del_distance=get_indel_info(del_info,read.get_reference_positions().index(pos_index))
-                result_dict[geno]["ins_num"].append(ins_num)
-                if ins_num==0:
-                    result_dict[geno]["ins_length"].append(["no"]); result_dict[geno]["ins_distance"].append(["no"])
-                else: #the ins_length and ins_distance are list format
-                    result_dict[geno]["ins_length"].append(ins_length) ## append a list
-                    result_dict[geno]["ins_distance"].append(ins_distance) ## append a list
-                
-                result_dict[geno]["del_num"].append(del_num)
-                if del_num==0:
-                    result_dict[geno]["del_length"].append(["no"]); result_dict[geno]["del_distance"].append(["no"])
-                else: # the del_length and del_distance are list format
-                    result_dict[geno]["del_length"].append(del_length)
-                    result_dict[geno]["del_distance"].append(del_distance)
-
-                # querypos(querypos_p): the distance between pos and read start (doubt: the more far away from 1st seq pos, the lower quality may have), 
-                # seqpos_p cycling length, related with strand (note: next_reference_start is only work for PE); 
-                # for visium, all reads are read2, so seqpos may same as the len(querypos)
-                # left pos: mapping position for the reference start; 
-                left_boundary=edist+left_softclip+left_hardclip
-                right_boundary=len(cut_pos)-edist + right_softclip + right_hardclip
-                result_dict[geno]["left_read_edist"].append(edist)
-                result_dict[geno]["right_read_edist"].append(len(cut_pos)-edist)
-
-                left_boundary_remove_clip=edist
-                right_boundary_remove_clip=len(cut_pos)-edist
-                result_dict[geno]["querypos"].append(left_boundary)
-                result_dict[geno]["seqpos"].append(right_boundary)
-                if is_reverse in [True,"TRUE","true","True"]:
-                    distance_to_end=right_boundary/readLen
-                    result_dict[geno]["reverse_dp"]+=1
-                    distance_to_end_remove_clip=right_boundary_remove_clip/len(cut_pos)
-                    distance_to_end_remove_clip=right_boundary_remove_clip/len(cut_pos)
-                    distance_to_end_remove_clip_save=right_boundary_remove_clip
-
-                else:
-                    distance_to_end=left_boundary/readLen
-                    result_dict[geno]["forward_dp"]+=1
-                    distance_to_end_remove_clip=left_boundary_remove_clip/len(cut_pos)
-                    distance_to_end_remove_clip=left_boundary_remove_clip/len(cut_pos)
-                    distance_to_end_remove_clip_save=left_boundary_remove_clip
-                    
-                result_dict[geno]["distance_to_end"].append(distance_to_end)
-                result_dict[geno]["distance_to_end_remove_clip"].append(distance_to_end_remove_clip)
-
-                leftpos_p=read.reference_start
-                rightpos_p=read.reference_end # same as leftpo, can be deleted 
-                result_dict[geno]["leftpos_p"].append(leftpos_p)
-                result_dict[geno]["rightpos_p"].append(rightpos_p)
-
-                #baseq1b
-                if pos_index+1 in cut_pos:
-                    baseq1b=read.get_forward_qualities()[raw_index+1]
-                else:
-                    baseq1b=""
-                result_dict[geno]["baseq1b"].append(baseq1b)
-                # print(read)
-                #gene information
-                try:
-                    result_dict[geno]["GeneID_list"].append(read.get_tag("GX"))
-                except:
-                    result_dict[geno]["GeneID_list"].append("no")
-                try:
-                    result_dict[geno]["GeneName_list"].append(read.get_tag("GN"))
-                except:
-                    result_dict[geno]["GeneName_list"].append("no")
-                try:
-                    #'ENST00000301072,+1576,120M;ENST00000541364,+1539,120M;ENST00000552448,+1650,120M;ENST00000639419,+923,120M')
-                    for item in read.get_tag("TX").split(";"):
-                        transcript_id,_,_=item.split(",")
-                        result_dict[geno]["TransID_list"].append(transcript_id)
-                except:
-                    result_dict[geno]["TransID_list"].append("no")
-
-                UMI_name = str(UB)
-                barcode_name = str(CB)
-
-                if barcode_name not in site_barcode_UMI_dict.keys():
-                    site_barcode_UMI_dict[barcode_name]=defaultdict(dict)
-
-                if UMI_name not in site_barcode_UMI_dict[barcode_name].keys():
-                    site_barcode_UMI_dict[barcode_name][UMI_name]["count"]=defaultdict(int)
-                    site_barcode_UMI_dict[barcode_name][UMI_name]["quality"]={"A":defaultdict(int),"T":defaultdict(int),"C":defaultdict(int),"G":defaultdict(int)}
-                    site_barcode_UMI_dict[barcode_name][UMI_name]["end"]=[]
-
-                site_barcode_UMI_dict[barcode_name][UMI_name]["count"][geno]+=1
-                # site_barcode_UMI_dict[barcode_name][UMI_name]["quality"][geno][quality]+=1
-                site_barcode_UMI_dict[barcode_name][UMI_name]["quality"][geno][quality]+=1
-                site_barcode_UMI_dict[barcode_name][UMI_name]["end"].append(distance_to_end_remove_clip_save)
-
-    for barcode in site_barcode_UMI_dict.keys():
-        read_have_alt=False
-        read_number_per_spot=0
-        UMI_number_per_spot=0
-
-        # UMI_dp+=len(site_barcode_UMI_dict[barcode].keys())
-        for UMI in site_barcode_UMI_dict[barcode]:             
-            count_dict=site_barcode_UMI_dict[barcode][UMI]["count"]
-            quality_dict=site_barcode_UMI_dict[barcode][UMI]["quality"]
-            phred_dict=calculate_UMI_combine_phred(count_dict,quality_dict,weigh=0.5)
-            candidate_allele,phred=get_most_candidate_allele(phred_dict,one_ref)
-            threshold=1
-            norm_count=check_UMIconsistence_for_each_geno(count_dict,threshold)
-            if norm_count!=[]:
-                for geno,prop in zip("ATCG",norm_count):
-                    result_dict[geno]["UMI_consistence_prop"].append(prop)
-
-            for geno in "ATCG":
-                if site_barcode_UMI_dict[barcode][UMI]["count"][geno]!=0:
-                    result_dict[geno]["GenoSpotNum"]+=1
-                    UMI_number_per_spot+=1
-                    # print([count_dict["A"],count_dict["T"],count_dict["C"],count_dict["G"]])
-                    result_dict[geno]["read_number_per_UMI"].append(count_dict[geno])
-                    read_number_per_spot+=site_barcode_UMI_dict[barcode][UMI]["count"][geno]
-
-            if candidate_allele==alt:
-                read_have_alt=True
+        try:
+            # 读取文件并处理每一行
+            with open(barcode_file, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 3:  # 确保有足够的列
+                        barcode_name = parts[0]  # 第一列是barcode_name
+                        corrected_name = handle_barcode_name(cell_dict, barcode_name)
+                        
+                        denominator = float(parts[1])  # 第2列，0-based索引是1
+                        numerator = float(parts[2])    # 第3列，0-based索引是2
+                        
+                        if denominator > 0:  # 避免除以0
+                            if corrected_name not in barcode_data:
+                                barcode_data[corrected_name] = {
+                                    'numerator': 0,
+                                    'denominator': 0
+                                }
+                            
+                            barcode_data[corrected_name]['numerator'] += numerator
+                            barcode_data[corrected_name]['denominator'] += denominator
+        except Exception as e:
+            print(f"Error processing file {barcode_file}: {e}")
+            return [], []
         
-        if read_have_alt==True:
-            result_dict[alt]["read_number_per_spot"].append(read_number_per_spot)
-            result_dict[alt]["UMI_number_per_spot"].append(UMI_number_per_spot)
+        # 计算每个校正后barcode_name的VAF
+        ref_list = []
+        alt_list = []
+        
+        for barcode_name, data in barcode_data.items():
+            vaf = data['numerator'] / data['denominator']
+            if data['numerator'] == 0:  # ref
+                ref_list.append(vaf)
+            else:  # alt
+                alt_list.append(vaf)
+        
+        return ref_list, alt_list
+    
+    else:
+        # 如果没有cell_dict，使用原来的逻辑
+        command_ref = "awk '$3==0 {print $3/$2}' %s" % (barcode_file)
+        try:
+            result_ref = subprocess.check_output(command_ref, text=True, shell=True)
+            ref_list = [float(i) for i in result_ref.strip().split("\n") if i]
+        except:
+            ref_list = []
 
-        else:
-            result_dict[one_ref]["read_number_per_spot"].append(read_number_per_spot)
-            result_dict[one_ref]["UMI_number_per_spot"].append(UMI_number_per_spot)
+        command_alt = "awk '$3>=1 {print $3/$2}' %s" % (barcode_file)
+        try:
+            result_alt = subprocess.check_output(command_alt, text=True, shell=True)
+            alt_list = [float(i) for i in result_alt.strip().split("\n") if i]
+        except:
+            alt_list = []   
 
-    del in_bam_read
-    return result_dict, dp
-
-
-def grep_dp_from_barcode_dir1(barcode_file):
-    command_ref="awk '$11==0 {print $6}' %s" % (barcode_file)
-    try:
-        result_ref=subprocess.check_output(command_ref,text=True,shell=True)
-        ref_list=[int(float(i)) for i in result_ref.strip().split("\n")]
-    except:
-        ref_list=[]
-
-    command_alt="awk '$11==1 {print $6}' %s" % (barcode_file)
-    try:
-        result_alt=subprocess.check_output(command_alt,text=True,shell=True)
-        alt_list=[int(float(i)) for i in result_alt.strip().split("\n")]
-    except:
-        alt_list=[]   
-
-    return ref_list,alt_list
-
-
-def grep_dp_from_barcode_dir2(barcode_file):
-    command_ref="awk '$2==0 {print $1}' %s" % (barcode_file)
-    try:
-        result_ref=subprocess.check_output(command_ref,text=True,shell=True)
-        ref_list=[int(float(i)) for i in result_ref.strip().split("\n")]
-    except:
-        ref_list=[]
-
-    command_alt="awk '$2==1 {print $1}' %s" % (barcode_file)
-    try:
-        result_alt=subprocess.check_output(command_alt,text=True,shell=True)
-        alt_list=[int(float(i)) for i in result_alt.strip().split("\n")]
-    except:
-        alt_list=[]   
-
-    return ref_list,alt_list
+        return ref_list, alt_list
 
 
 def check_UMIconsistence_for_each_geno(count_dict,threshold=1):
@@ -1969,28 +2673,36 @@ def hanle_bam_dp(bam_file,chrom,pos,identifier):
 
 
 def extract_feature_perline(sample,
-                   CBtag,
-                   UBtag,
-                   tmpdir,
-                   mode,
-                   compare_pl_path,
-                   reference_fasta,
-                   grep_sf_info,
-                   sf_file,
-                   bam_file,
-                   ind_count_file,
-                   ind_geno_file,
-                   gff3_file, 
-                   combine_phase_file,
-                   no_combine_phase_file,
-                   empty_df,adata,
-                   used_tmp_mappbablity_file, 
-                   annovar_annotaion_file, 
-                   vaf_cluster_file,
-                   readLen,
-                   barcode_dir,
-                   prior,
-                   line):
+                    run_type,
+                    bins,
+                    tmpdir,
+                    mode,
+                    compare_pl_path,
+                    reference_fasta,
+                    grep_sf_info,
+                    sf_file,
+                    bam_file,
+                    ind_count_file,
+                    ind_geno_file,
+                    gene_count_file,
+                    gff3_file, 
+                    knownGene_file,
+                    total_gene_count, 
+                    combine_phase_file,
+                    no_combine_phase_file,
+                    empty_df,adata,
+                    used_tmp_mappbablity_file, 
+                    annovar_annotaion_file, 
+                    vaf_cluster_file,
+                    readLen,
+                    barcode_dir,
+                    prior,
+                    cell_dict,
+                    downsample,
+                    targe_dp,
+                    seed,
+                    # umi_downsample_dp,
+                    line):
     """
     This function is used to get the features for per site
 
@@ -2024,7 +2736,7 @@ def extract_feature_perline(sample,
                 sf_line=sf_line.strip().split("\t")
                 mutation_features.add_info_from_sf(sf_line)
 
-    # print("running for ", identifier)
+    print("running for ", identifier)
     #Feature(phase):discordant distancePhase
     if combine_phase_file!="":
         combine_phase_result=get_intergration_from_identifier_and_file(compare_pl_path,identifier, combine_phase_file)
@@ -2042,7 +2754,7 @@ def extract_feature_perline(sample,
         #         mutation_features.add_info_from_phase(results)
     #Feature: read-level features from bam (In this version, the gene information will grep from bam file)
     if bam_file!="":
-        read_info_dict,dp=handle_bam_file(bam_file,mut_chrom,mut_pos,mut_ref[0],mut_alt,CBtag,UBtag,readLen)
+        read_info_dict,dp= handel_bam_file(bam_file,mut_chrom,mut_pos,mut_ref[0],mut_alt,run_type,bins,cell_dict,readLen,downsample,targe_dp,seed)
         # print(read_info_dict)
         if dp!=0:
             mutation_features.add_read_info(read_info_dict,dp)
@@ -2054,14 +2766,12 @@ def extract_feature_perline(sample,
         barcode_file2=os.path.join(barcode_dir,identifier+".barcode.mutinfo.txt")
         
         if os.path.exists(barcode_file1):
-            ref_spot_dp_list, alt_spot_dp_list=grep_dp_from_barcode_dir1(barcode_file1)
-            mutation_features.add_info_from_barcode_dir(ref_spot_dp_list, alt_spot_dp_list)
+            ref_vaf_list, alt_vaf_list=grep_dp_from_barcode_dir1(barcode_file1,cell_dict)
+            mutation_features.add_info_from_barcode_dir(ref_vaf_list, alt_vaf_list)
 
         elif os.path.exists(barcode_file2):
-            ref_spot_dp_list, alt_spot_dp_list=grep_dp_from_barcode_dir2(barcode_file2)
-            mutation_features.add_info_from_barcode_dir(ref_spot_dp_list, alt_spot_dp_list)
-
-
+            ref_vaf_list, alt_vaf_list=grep_dp_from_barcode_dir2(barcode_file2,cell_dict)
+            mutation_features.add_info_from_barcode_dir(ref_vaf_list, alt_vaf_list)
 
     #Feature: distanceExon genetype GeneNumber
     if gff3_file!="":
@@ -2106,7 +2816,24 @@ def extract_feature_perline(sample,
             # mutation_features.add_info_from_gff(sline)
             mutation_features.add_info_from_wgEncodeGencodeExon(sline)
         mutation_features.distanceExon=min(mutation_features.distanceExon) if mutation_features.distanceExon!=[] else "no"
+        # mutation_features.distanceExonIgnoreStrand=min(mutation_features.distanceExonIgnoreStrand) if mutation_features.distanceExonIgnoreStrand!=[] else "no"
+        # print(mutation_features.distanceExon, mutation_features.distanceExonIgnoreStrand)
+    #Feature: expression (may be deleted)
+    ## count
+    # if gene_count_file!="" and mutation_features.gene_id!=[]:
+    #     for gene_id in mutation_features.gene_id:
+    #         gene_count_info=get_info_by_grep(gene_count_file,gene_id)
+    #         mutation_features.add_gene_count_info(gene_count_info)
 
+    # ## FPKM
+    # if knownGene_file!="" and mutation_features.transcript_name!=[] and total_gene_count!="":
+    #     for trans_id in mutation_features.transcript_name:
+    #         knownGene_info=get_info_by_grep(knownGene_file,trans_id)
+    #         mutation_features.add_info_from_knownGene(knownGene_info)
+    #         mutation_features.add_expression_info(total_gene_count)
+
+    #Feature: spot gene expression variance
+    # print(mutation_features.gene_name)
     if adata is not None and mutation_features.gene_name!=[]:
         for gene_name in mutation_features.gene_name:
             try:
@@ -2129,6 +2856,22 @@ def extract_feature_perline(sample,
             if mappability_line!="":
                 mutation_features.add_mappability_info(mappability_line)
 
+    #Feature: annotation
+    # if annovar_annotaion_file_all!="":
+    #     # if mutation_features.phase_condition=="no":
+    #         # print("The mutation origin may lost, please run phase before running")
+    #     annovar_annotaion_info=get_intergration_from_identifier_and_file(compare_pl_path,identifier,annovar_annotaion_file_all,index_in_query="2 3 5 6")
+
+    #     # annovar_annotaion_info=get_intergration_from_identifier_and_file(compare_pl_path,identifier,annovar_annotaion_file,index_in_query="0 1 3 4")
+    #     for annovar_line in annovar_annotaion_info.strip().split("\n"):
+    #         # print(annovar_line)
+    #         if annovar_line!="":
+    #             mutation_features.add_annotation_from_annovar_all(annovar_annotaion_info)
+    
+    # if annovar_annotaion_file_exon!="" and mutation_features.pos_anno=="exonic":
+    #     # if mutation_features.phase_condition=="no":
+    #         # print("The mutation origin may lost, please run phase before running")
+    #     annovar_annotaion_info=get_intergration_from_identifier_and_file(compare_pl_path,identifier,annovar_annotaion_file_exon,index_in_query="4 5 7 8")
     if annovar_annotaion_file!="":
         annovar_annotaion_info=get_info_by_grep(annovar_annotaion_file,identifier)
         if annovar_annotaion_info!="":
@@ -2154,8 +2897,8 @@ def extract_feature_perline(sample,
             mutation_features.add_info_from_cluster_vaf(vaf_cluster_info)
 
     if reference_fasta!="":
-        GCcontent,DNAMutationType,RNAMutationType,equal_to_previous_bases, cause_ploy_alt=get_context_from_reference(reference_fasta,mutation_features.major_read_strand,identifier)
-        mutation_features.add_context_info(GCcontent,DNAMutationType,RNAMutationType, equal_to_previous_bases, cause_ploy_alt)
+        GCcontent, DNAMutationType, RNAMutationType, equal_to_previous_bases, cause_poly_alt,context_10bp=get_context_from_reference(reference_fasta,mutation_features.major_read_strand,identifier)
+        mutation_features.add_context_info(GCcontent,DNAMutationType,RNAMutationType, equal_to_previous_bases, cause_poly_alt,context_10bp)
 
     if prior!="":
         prior_info=get_intergration_from_identifier_and_file(compare_pl_path,only_pos_identifier,prior,index_in_query="0 1 0 1")
@@ -2171,13 +2914,7 @@ def extract_feature_perline(sample,
     elif mode=="test":
         # return mutation_features.test_values()
         out_dict = mutation_features.test_values()
-
-    del mutation_features
-    return out_dict
-
-
-   
-
-
-
-
+    # all_features.append(mutation_features)
+    # del mutation_features
+    return (read_info_dict, out_dict)
+    # return out_dict

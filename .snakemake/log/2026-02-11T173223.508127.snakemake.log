@@ -1,0 +1,61 @@
+Config file config.txt is extended by additional config specified via the command line.
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 2
+Rules claiming more threads will be scaled down.
+Job stats:
+job                  count
+-----------------  -------
+all                      1
+filter                   1
+get_error_profile        1
+get_features             1
+pred                     1
+total                    5
+
+Select jobs to execute...
+
+[Wed Feb 11 17:32:24 2026]
+rule get_error_profile:
+    input: demo/bam_filter/IN.bam, demo/demo_mpileup.candidate_error.result, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/01.Data_download/07.brain/04.Analysis/04.mutations/annovar_info.txt
+    output: demo/error/demo.prior.out, demo/error/demo.filter_falt.identifier.txt, demo/error/demo.error.count.out, demo/error/demo.lysis_error.txt, demo/error/demo.lysis_profile.txt
+    jobid: 11
+    reason: Missing output files: demo/error/demo.lysis_profile.txt; Updated input files: demo/demo_mpileup.candidate_error.result
+    wildcards: sample=demo
+    resources: tmpdir=/tmp
+
+[Wed Feb 11 17:32:40 2026]
+Error in rule get_error_profile:
+    jobid: 11
+    input: demo/bam_filter/IN.bam, demo/demo_mpileup.candidate_error.result, /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv, /storage/douyanmeiLab/yangzhirui/01.Data_download/07.brain/04.Analysis/04.mutations/annovar_info.txt
+    output: demo/error/demo.prior.out, demo/error/demo.filter_falt.identifier.txt, demo/error/demo.error.count.out, demo/error/demo.lysis_error.txt, demo/error/demo.lysis_profile.txt
+    shell:
+        
+        python /storage/douyanmeiLab/yangzhirui/SpaceTracer//0_other_func.py prior             --outprefix demo             --posfile demo/demo_mpileup.candidate_error.result  --annovar /storage/douyanmeiLab/yangzhirui/01.Data_download/07.brain/04.Analysis/04.mutations/annovar_info.txt             --thread 1             --outdir demo/error
+        
+        awk -v threshold=$(echo "1 - 1e-4" | bc) '
+            {
+                base = $3;
+                if (base == "A") value = $4;
+                else if (base == "T") value = $5;
+                else if (base == "C") value = $6;
+                else if (base == "G") value = $7;           
+                if (value + 0 > threshold + 0) {  
+                    print $0 "	" value;
+                }
+            }' demo/error/demo.prior.out |             awk '{print $1, $2, ".",$3,"."}' OFS="	" > demo/error/demo.filter_falt.identifier.txt
+        
+        python /storage/douyanmeiLab/yangzhirui/SpaceTracer//others/get_candidate_error.py error             -s demo             --bam demo/bam_filter/IN.bam             --barcodes /storage/douyanmeiLab/yangzhirui/SpaceTracer/demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv             --vcffile demo/error/demo.filter_falt.identifier.txt             --outdir demo/error/             --thread 1 
+        
+        awk '$9!=0{print $1, $2, $2,$5,$8}' OFS="	" demo/error/demo.error.count.out > demo/error/demo.lysis_error.txt
+
+        python /storage/douyanmeiLab/yangzhirui/SpaceTracer//others/prepare_MutationSig.py             -i demo/error/demo.lysis_error.txt              -o demo/error/demo.lysis_profile.txt              --reverse  --mode RNA -c 3,4,5             -f /storage/douyanmeiLab/yangzhirui/SpaceTracer/Resources/genome.fa
+
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Removing output files of failed job get_error_profile since they might be corrupted:
+demo/error/demo.prior.out, demo/error/demo.filter_falt.identifier.txt
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: ../.snakemake/log/2026-02-11T173223.508127.snakemake.log
