@@ -51,8 +51,7 @@ if h5ad_file!="" and os.path.exists(h5ad_file):
 workdir: savePATH
 rule all:
     input:
-        expand("{sample}/pred.FINAL.sf_preseverd.txt", sample=SAMPLES),
-        expand("{sample}/pred.FINAL.sf_free.txt", sample=SAMPLES)
+        expand("{sample}/pred.FINAL.sf_preseverd.txt", sample=SAMPLES)
 
 
 ####### sub functions #######
@@ -259,8 +258,7 @@ rule pred:
         hFDR_file="{sample}/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt"
 
     output:
-        pred_true_sf_preseverd="{sample}/predict_spatial_feature_preserved/results/{sample}_total_pred_truesites.txt",
-        pred_true_sf_free="{sample}/predict_spatial_feature_free/results/{sample}_total_pred_truesites.txt"
+        pred_true_sf_preseverd="{sample}/predict_spatial_feature_preserved/results/{sample}_total_pred_truesites.txt"
     shell:
         """
         python {srcPath}/4_run_model_predict.py predict  \
@@ -268,23 +266,14 @@ rule pred:
             --outdir {wildcards.sample}/predict_spatial_feature_preserved \
             -s {wildcards.sample} \
             --train FALSE --thr_altcount 5 --phase_refine FALSE  --save FALSE \
-            --model_dir {srcPath}/models_trained/spatial_feature_preserved_model \
-            --model_name spatial_feature_preserved
+            --model_dir {srcPath}/models_trained/spatial_feature_preserved_excludecSCC1_model \
+            --model_name spatial_feature_preserved_excludecSCC1
         
-        python {srcPath}/4_run_model_predict.py predict \
-            --input {input.hFDR_file} \
-            --outdir {wildcards.sample}/predict_spatial_feature_free \
-            -s {wildcards.sample} \
-            --train FALSE --thr_altcount 5 --phase_refine FALSE  --save FALSE \
-            --model_dir {srcPath}/models_trained/spatial_feature_free_model \
-            --no_spatial True \
-            --model_name spatial_feature_free
         """
 
 rule filter:
     input:
-        pred_true_sf_preseverd="{sample}/predict_spatial_feature_preserved/results/{sample}_total_pred_truesites.txt",
-        pred_true_sf_free="{sample}/predict_spatial_feature_free/results/{sample}_total_pred_truesites.txt",
+        pred_true_sf_preseverd="{sample}/predict_spatial_feature_preserved/results/{sample}_total_pred_truesites.txt"
         feature_file="{sample}/features_dir/all_RF_filter_hFDR_less_08_feature_remove_AtoG.txt",
         ind_germ_file="{sample}/geno_files/{sample}.germ_genotype.out"
     output:
@@ -305,21 +294,7 @@ rule filter:
                 {imprinted_genes_bed} \
                 {PON_file} 
         
-        bash {srcPath}/5_remove_recurrent_mutations.sh \
-                {srcPath} \
-                {input.pred_true_sf_free} \
-                {input.feature_file} \
-                {wildcards.sample}/predict_spatial_feature_free \
-                {input.ind_germ_file} \
-                {GENOME_FA} \
-                {RNA_editing_path} \
-                {gtexGene} \
-                {dbSNP} \
-                {imprinted_genes_bed} \
-                {PON_file}         
-
         cp {wildcards.sample}/predict_spatial_feature_preserved/pred.FINAL.txt {output.filter_pred_sites_sf_preseverd}
-        cp {wildcards.sample}/predict_spatial_feature_free/pred.FINAL.txt {output.filter_pred_sites_sf_free}
         """
 
 
