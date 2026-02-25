@@ -21,6 +21,8 @@ This release focuses on updating the genotype calculation and enhancing the feat
   - [Step1: Quality Control](#step1-quality-control)
   - [Step2: Genotyping](#step2-genotyping)
   - [Step3: Feature Extraction](#step3-feature-extraction)
+  - [Step4: Mutation Prediction](#step4-mutation-prediction)
+  - [Step5: Remove Recurrent Artifacts](#step5-remove-recurrent-artifacts)
 - [Contact](#contact)
 
 
@@ -108,6 +110,8 @@ tar -zxvf hg38.umap.tar.gz
 You could get the GTEx gene expression data from the [GTEx Portal](https://gtexportal.org/home/) or [dbGaP website](https://www.ncbi.nlm.nih.gov/gap/).
 
 
+### dbSNP
+The dbSNP138 VCF file for hg38 (Homo_sapiens_assembly38.dbsnp138.vcf) was obtained from the [Broad Institute's GATK Resource Bundle](https://gatk.broadinstitute.org/)
 ### Figshare
 All necessary resources could be downloaded from https://figshare.com/s/c7836f53c4eafb556ee1.
 
@@ -392,7 +396,7 @@ python 3_run_get_features.py \
 | `--gtexGene` | Optional. gtexGene file. |
 | `--artifact_signature` | Optional. Sample artifact signature file. |
 | `--reference_error_profile` | Optional. Reference data lysis error signature file. |
-| `--bkg` | Optional. Background error file. |
+
 
 
 #### Example demo
@@ -414,13 +418,12 @@ python 3_run_get_features.py \
   --h5ad demo_input/demo_results.h5ad  \
   --spaceranger_result_dir demo_input/Spaceranger_result/outs/ \
   --ind_count_file demo_output/demo/counts_files/demo.ind_filter.count.out \
-  --mappbablity_file demo_input/Resource/demo.k24.umap.bedgraph \
-  --gff3_file demo_input/Resource/demo.gencode.v44.annotation.exon.sort.gff3 \
+  --mappbablity_file Resources/demo.k24.umap.bedgraph \
+  --gff3_file Resources/demo.gencode.v44.annotation.exon.sort.gff3 \
   --vaf_cluster_file demo_output/demo/geno_files/demo.cluster_vaf.out \
-  --gtexGene demo_input/Resource/demo.gtexGene.txt \
-  --artifact_signature \
-  --reference_demo_input/Resource/error_SigProfile.txt 
-  --reference_error_profile lysis_Signatures_split3.Sigprofile \
+  --gtexGene Resources/demo.gtexGene.txt \
+  --artifact_signature demo_inputs/lysis_errors.Sigprofile.txt \
+  --reference_error_profile Resources/lysis_Signatures_split3.Sigprofile \
   --barcodes demo_input/Spaceranger_result/outs/spatial/tissue_positions.csv \
 
 ```
@@ -515,8 +518,8 @@ The final predicted somatic mutation list detected would be saved in the `demo/o
 
 
 
-### Step5: Filter
-This step filters the predicted result using public datasets and Panel of Normals (PON) data we provided.
+### Step5: Remove Recurrent Artifacts
+This step filters the predicted result using public datasets and Panel of Normals (PON) data we provided. All related files can be found in https://figshare.com/s/c7836f53c4eafb556ee1
 
 ```bash
 bash 5_remove_recurrent_mutations.sh \
