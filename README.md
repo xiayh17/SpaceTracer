@@ -112,6 +112,7 @@ You could get the GTEx gene expression data from the [GTEx Portal](https://gtexp
 
 ### dbSNP
 The dbSNP138 VCF file for hg38 (Homo_sapiens_assembly38.dbsnp138.vcf) was obtained from the [Broad Institute's GATK Resource Bundle](https://gatk.broadinstitute.org/)
+
 ### Figshare
 All necessary resources could be downloaded from https://figshare.com/s/c7836f53c4eafb556ee1.
 
@@ -157,7 +158,7 @@ Ensure the `config.txt` file is correctly set up with the required input paths a
 | `h5ad_file` | Optional. Spatial transcriptomics data information file in h5ad format. |
 
 ### Results
-The final somatic mutation list detected would be saved in the `$savePATH/$sample/predict/results/demo_total_pred_truesites.txt` file.
+The final somatic mutation list detected would be saved in the `$savePATH/$sample/predict_spatial_feature_preserved/pred.FINAL.txt` file.
 
 ## Run SpaceTracer with Separate Steps
 
