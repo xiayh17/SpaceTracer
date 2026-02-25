@@ -37,7 +37,7 @@ RUN conda update -n base -c defaults conda && \
     conda config --set solver libmamba
 
 # Create snakemake environment and install snakemake3.13.3
-RUN conda create -y -n snakemake3 -c bioconda snakemake=3.13.3
+RUN conda create -y -n snakemake3 -c conda-forge -c bioconda -c defaults snakemake=3.13.3
 
 # Create SpaceTracer environment and configure channels
 RUN conda config --add channels conda-forge && \
