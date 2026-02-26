@@ -6,10 +6,6 @@ on:
     paths:
       - 'Dockerfile'
       - '.github/workflows/docker-publish.yml'
-  pull_request:
-    branches: [ "main", "master" ]
-    paths:
-      - 'Dockerfile'
   # Allow manual trigger
   workflow_dispatch:
 
