@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM --platform=linux/amd64 ubuntu:20.04
 
 # Set DEBIAN_FRONTEND to noninteractive to avoid tzdata prompt
 ENV DEBIAN_FRONTEND=noninteractive
