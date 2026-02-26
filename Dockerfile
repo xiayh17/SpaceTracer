@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Install base dependencies, JDK, and Miniconda in a single layer to reduce image size
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget bzip2 build-essential openssh-server curl zlib1g-dev locales jq && \
+    apt-get install -y --no-install-recommends wget bzip2 build-essential openssh-server curl ca-certificates zlib1g-dev locales jq && \
     locale-gen en_US.UTF-8 && \
     # Install JDK
     mkdir -p /opt/java && \
