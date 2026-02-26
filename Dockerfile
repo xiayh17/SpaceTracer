@@ -46,27 +46,30 @@ RUN conda config --add channels conda-forge && \
     conda config --add channels r && \
     conda create -y -n SpaceTracer python=3.9
 
-# Install conda packages with libmamba solver for faster installation
-RUN conda install -y -n SpaceTracer \
+# Install conda packages with mamba for faster installation and lower memory usage
+RUN conda install -y -n base -c conda-forge mamba && \
+    mamba install -y -n SpaceTracer \
     numpy=1.24.3 \
     pandas=1.5.3 \
     scikit-learn \
     matplotlib=3.5.0 \
     scipy=1.11.3 \
-    seaborn=0.13.0 \
+    seaborn=0.13.0 && \
+    mamba install -y -n SpaceTracer \
     samtools \
     bedtools \
     pybedtools \
     vcftools \
     geopandas=0.14.0 \
+    pip=21.2.4 && \
+    mamba install -y -n SpaceTracer \
     r-base \
-    pip=21.2.4 \
     r-pracma \
     r-dplyr \
     r-deconstructSigs \
     r-extraDistr \
     r-tidyr && \
-    conda clean --all --yes
+    mamba clean --all --yes
 
 # Install uv for faster pip package installation
 RUN pip install uv
